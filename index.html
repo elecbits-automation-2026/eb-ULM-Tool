@@ -196,6 +196,34 @@
     padding: 24px 16px; color: #5A6B85; text-align: center; font-size: 13px;
     border: 1px dashed #CBD5E1; border-radius: 10px; background: #F7F9FC;
   }
+
+  /* Multi-date calendar (To-Do filter) */
+  .cal-pop {
+    position: absolute; z-index: 40; top: calc(100% + 6px); right: 0;
+    width: 280px; background: #fff; border: 1px solid #E2E8F2; border-radius: 12px;
+    box-shadow: 0 12px 28px rgba(10,22,40,.12); padding: 12px;
+    animation: pop .15s ease;
+  }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cal-title { font-family: 'Space Grotesk'; font-weight: 600; font-size: 14px; color: #0A1628; }
+  .cal-nav { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+             border-radius: 6px; color: #5A6B85; cursor: pointer; transition: all .12s ease; }
+  .cal-nav:hover { background: #EEF2F8; color: #0A1628; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-dow { font-size: 10px; font-weight: 600; color: #5A6B85; text-align: center; padding: 4px 0; text-transform: uppercase; letter-spacing: .04em; }
+  .cal-day {
+    aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #0A1628; border-radius: 6px; cursor: pointer;
+    transition: all .12s ease; user-select: none;
+  }
+  .cal-day:hover { background: #EEF2F8; }
+  .cal-day.muted { color: #CBD5E1; }
+  .cal-day.today { box-shadow: inset 0 0 0 1px #1E6BFF; font-weight: 600; }
+  .cal-day.selected { background: #1E6BFF; color: #fff; font-weight: 600; }
+  .cal-day.selected:hover { background: #0E4FCC; }
+  .cal-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid #EEF2F8; }
+  .cal-foot button { font-size: 12px; color: #5A6B85; }
+  .cal-foot button:hover { color: #1E6BFF; }
 </style>
 </head>
 <body class="min-h-screen">
@@ -299,12 +327,15 @@
             <h2 class="font-display font-bold text-lg text-eb-ink">To-Do</h2>
             <p class="text-[12px] text-eb-muted">Tasks assigned to you, across every vertical</p>
           </div>
-          <div class="flex items-center gap-2">
-            <input type="date" id="todo-date-picker" class="input !py-1.5 !px-2 !text-[13px]" />
-            <button class="btn-ghost" id="todo-add-date">+ Add date</button>
+          <div class="flex items-center gap-2 relative">
+            <button class="btn-ghost" id="todo-cal-toggle">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span id="todo-cal-label">Filter dates</span>
+            </button>
             <button class="btn-icon" id="todo-clear-dates" title="Clear filters">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
             </button>
+            <div id="todo-cal-pop" class="cal-pop hidden"></div>
           </div>
         </div>
         <div id="todo-date-pills" class="flex flex-wrap gap-1.5 mb-3"></div>
@@ -679,13 +710,112 @@ function renderTodos() {
   }).join('');
   el.querySelectorAll('[data-task]').forEach(r => r.onclick = () => openTaskModal(r.dataset.task, false));
 }
-document.getElementById('todo-add-date').onclick = () => {
-  const v = document.getElementById('todo-date-picker').value;
-  if (!v) return toast('Pick a date first', 'warn');
-  if (!todoSelectedDates.includes(v)) todoSelectedDates.push(v);
-  renderTodoPills(); renderTodos();
+document.getElementById('todo-clear-dates').onclick = () => {
+  todoSelectedDates = []; renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
 };
-document.getElementById('todo-clear-dates').onclick = () => { todoSelectedDates = []; renderTodoPills(); renderTodos(); };
+
+/* Multi-date inline calendar — click days to toggle, no separate "Add date" button */
+const _calState = { year: new Date().getFullYear(), month: new Date().getMonth() };
+function updateTodoCalLabel() {
+  const lbl = document.getElementById('todo-cal-label');
+  lbl.textContent = todoSelectedDates.length
+    ? `${todoSelectedDates.length} date${todoSelectedDates.length>1?'s':''} selected`
+    : 'Filter dates';
+}
+function renderTodoCalendar() {
+  const pop = document.getElementById('todo-cal-pop');
+  if (pop.classList.contains('hidden')) return;
+  const { year, month } = _calState;
+  const first = new Date(year, month, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const monthName = first.toLocaleDateString('en-IN', { month:'long', year:'numeric' });
+  const todayIso = todayISO();
+  const dowLabels = ['S','M','T','W','T','F','S'];
+
+  const cells = [];
+  for (let i = startDow - 1; i >= 0; i--) {
+    const day = daysInPrev - i;
+    cells.push({ day, muted: true, iso: null });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    cells.push({ day: d, muted: false, iso });
+  }
+  while (cells.length % 7 !== 0) {
+    const day = cells.length - (startDow + daysInMonth) + 1;
+    cells.push({ day, muted: true, iso: null });
+  }
+
+  pop.innerHTML = `
+    <div class="cal-head">
+      <button class="cal-nav" data-cal-prev aria-label="Previous month">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <div class="cal-title">${monthName}</div>
+      <button class="cal-nav" data-cal-next aria-label="Next month">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
+    <div class="cal-grid">
+      ${dowLabels.map(l => `<div class="cal-dow">${l}</div>`).join('')}
+      ${cells.map(c => {
+        const cls = ['cal-day'];
+        if (c.muted) cls.push('muted');
+        if (c.iso === todayIso) cls.push('today');
+        if (c.iso && todoSelectedDates.includes(c.iso)) cls.push('selected');
+        return `<div class="${cls.join(' ')}" ${c.iso ? `data-cal-day="${c.iso}"` : ''}>${c.day}</div>`;
+      }).join('')}
+    </div>
+    <div class="cal-foot">
+      <button data-cal-clear>Clear</button>
+      <button data-cal-today>Today</button>
+    </div>
+  `;
+  pop.querySelector('[data-cal-prev]').onclick = () => {
+    _calState.month--;
+    if (_calState.month < 0) { _calState.month = 11; _calState.year--; }
+    renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-next]').onclick = () => {
+    _calState.month++;
+    if (_calState.month > 11) { _calState.month = 0; _calState.year++; }
+    renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-clear]').onclick = () => {
+    todoSelectedDates = []; renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+  };
+  pop.querySelector('[data-cal-today]').onclick = () => {
+    const now = new Date();
+    _calState.year = now.getFullYear(); _calState.month = now.getMonth();
+    renderTodoCalendar();
+  };
+  pop.querySelectorAll('[data-cal-day]').forEach(d => d.onclick = () => {
+    const iso = d.dataset.calDay;
+    const idx = todoSelectedDates.indexOf(iso);
+    if (idx >= 0) todoSelectedDates.splice(idx, 1);
+    else todoSelectedDates.push(iso);
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+  });
+}
+document.getElementById('todo-cal-toggle').onclick = (e) => {
+  e.stopPropagation();
+  const pop = document.getElementById('todo-cal-pop');
+  pop.classList.toggle('hidden');
+  if (!pop.classList.contains('hidden')) {
+    if (todoSelectedDates.length) {
+      const ref = new Date(todoSelectedDates[todoSelectedDates.length-1]);
+      _calState.year = ref.getFullYear(); _calState.month = ref.getMonth();
+    }
+    renderTodoCalendar();
+  }
+};
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('todo-cal-pop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  if (!pop.contains(e.target) && !e.target.closest('#todo-cal-toggle')) pop.classList.add('hidden');
+});
 
 /* ============================================================
  *  TASKS ASSIGNED (by Saurav, to others)
@@ -899,6 +1029,7 @@ function init() {
   renderCountdowns();
   renderMeetings();
   renderTodoPills();
+  updateTodoCalLabel();
   refreshAssigneeOptions();
   renderTodos();
   renderAssigned();
