@@ -529,8 +529,14 @@ function renderCountdowns() {
       </div>`;
   }).join('');
   el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
-    const next = get(STORE.COUNTDOWNS, []).filter(x => x.id !== b.dataset.del);
-    set(STORE.COUNTDOWNS, next); renderCountdowns();
+    const id = b.dataset.del;
+    const item = get(STORE.COUNTDOWNS, []).find(x => x.id === id);
+    const name = item ? item.name : 'this countdown';
+    confirmDelete(`Delete countdown "${name}"? This cannot be undone.`, () => {
+      const next = get(STORE.COUNTDOWNS, []).filter(x => x.id !== id);
+      set(STORE.COUNTDOWNS, next); renderCountdowns();
+      toast('Countdown deleted');
+    });
   });
 }
 document.getElementById('add-countdown-btn').onclick = () => openCountdownModal();
@@ -538,12 +544,13 @@ function openCountdownModal() {
   showModal(`
     <div class="p-6">
       <h3 class="font-display font-bold text-xl text-eb-ink mb-1">New Countdown</h3>
-      <p class="text-eb-muted text-[13px] mb-5">Track a milestone with a live timer.</p>
+      <p class="text-eb-muted text-[13px] mb-5">Track a milestone with a live timer — counted <b class="text-eb-ink">In Days</b>.</p>
       <div class="space-y-4">
         <div><label class="lbl">Name</label><input id="cd-name" class="input" placeholder="e.g. Series-A Closure" /></div>
-        <div class="grid grid-cols-2 gap-3">
-          <div><label class="lbl">Unit of measurement</label><input id="cd-unit" class="input" placeholder="Days" value="Days" /></div>
-          <div><label class="lbl">Date of event</label><input id="cd-date" type="date" class="input" min="${todayISO()}" /></div>
+        <div>
+          <label class="lbl">Date of event</label>
+          <input id="cd-date" type="date" class="input" min="${todayISO()}" />
+          <p class="text-[12px] text-eb-muted mt-1.5">Countdown is shown <b>In Days</b> until this date.</p>
         </div>
       </div>
       <div class="flex justify-end gap-2 mt-6">
@@ -554,7 +561,7 @@ function openCountdownModal() {
   `);
   document.getElementById('cd-save').onclick = () => {
     const name = document.getElementById('cd-name').value.trim();
-    const unit = document.getElementById('cd-unit').value.trim() || 'Days';
+    const unit = 'Days';
     const date = document.getElementById('cd-date').value;
     if (!name) return toast('Name is required', 'warn');
     if (!date) return toast('Date is required', 'warn');
@@ -609,8 +616,14 @@ function renderMeetings() {
     </div>
   `).join('') + `<button class="btn-ghost w-full justify-center mt-2" id="add-meet-manual">+ Add manually</button>`;
   el.querySelectorAll('[data-del-meet]').forEach(b => b.onclick = () => {
-    set(STORE.MEETINGS, get(STORE.MEETINGS, []).filter(x => x.id !== b.dataset.delMeet));
-    renderMeetings();
+    const id = b.dataset.delMeet;
+    const item = get(STORE.MEETINGS, []).find(x => x.id === id);
+    const name = item ? item.name : 'this meeting';
+    confirmDelete(`Delete meeting "${name}"? This cannot be undone.`, () => {
+      set(STORE.MEETINGS, get(STORE.MEETINGS, []).filter(x => x.id !== id));
+      renderMeetings();
+      toast('Meeting deleted');
+    });
   });
   el.querySelectorAll('[data-fwd-meet]').forEach(b => b.onclick = () => openForwardMeetingModal(b.dataset.fwdMeet));
   document.getElementById('add-meet-manual').onclick = () => openMeetingModal();
@@ -1139,6 +1152,29 @@ function showModal(innerHTML, lg=false) {
   root.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModal));
 }
 function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+function confirmDelete(message, onConfirm) {
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-start gap-3 mb-3">
+        <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style="background: rgba(239,68,68,.12); color:#EF4444;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <h3 class="font-display font-bold text-xl text-eb-ink leading-tight">Confirm deletion</h3>
+          <p class="text-eb-muted text-[13px] mt-1">${escapeHtml(message)}</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="confirm-delete-btn" style="background:#EF4444;">Confirm</button>
+      </div>
+    </div>
+  `);
+  const btn = document.getElementById('confirm-delete-btn');
+  btn.onmouseenter = () => { btn.style.background = '#DC2626'; };
+  btn.onmouseleave = () => { btn.style.background = '#EF4444'; };
+  btn.onclick = () => { closeModal(); onConfirm(); };
+}
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 
 /* ============================================================
