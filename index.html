@@ -200,10 +200,18 @@
   /* Multi-date calendar (To-Do filter) */
   .cal-pop {
     position: absolute; z-index: 40; top: calc(100% + 6px); right: 0;
-    width: 280px; background: #fff; border: 1px solid #E2E8F2; border-radius: 12px;
+    width: 300px; background: #fff; border: 1px solid #E2E8F2; border-radius: 12px;
     box-shadow: 0 12px 28px rgba(10,22,40,.12); padding: 12px;
     animation: pop .15s ease;
   }
+  .cal-range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #EEF2F8; }
+  .cal-range label { font-size: 10px; font-weight: 600; color: #5A6B85; text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 3px; }
+  .cal-range input { width: 100%; padding: 5px 7px; font-size: 12px; border: 1px solid #E2E8F2; border-radius: 6px; color: #0A1628; }
+  .cal-range input:focus { outline: none; border-color: #1E6BFF; box-shadow: 0 0 0 2px rgba(30,107,255,.15); }
+  .cal-day.in-range { background: rgba(30,107,255,.12); color: #0E4FCC; border-radius: 0; }
+  .cal-day.in-range:hover { background: rgba(30,107,255,.20); }
+  .cal-day.range-start { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+  .cal-day.range-end   { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
   .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
   .cal-title { font-family: 'Space Grotesk'; font-weight: 600; font-size: 14px; color: #0A1628; }
   .cal-nav { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
@@ -496,7 +504,7 @@ function renderVerticalNav() {
  *  COUNTDOWNS
  * ============================================================ */
 function renderCountdowns() {
-  const list = get(STORE.COUNTDOWNS, []);
+  const list = get(STORE.COUNTDOWNS, []).slice().sort((a,b) => daysUntil(a.date) - daysUntil(b.date));
   const el = document.getElementById('countdown-list');
   if (!list.length) {
     el.innerHTML = `<div class="empty">No countdowns yet. Tap <b class="mx-1">Add</b> to create one.</div>`;
@@ -590,16 +598,120 @@ function renderMeetings() {
                  : m.location ? `<div class="text-[12px] text-eb-muted truncate">📍 ${escapeHtml(m.location)}</div>`
                               : `<div class="text-[12px] text-eb-muted">No link / location</div>`}
       </div>
-      <button class="btn-icon" data-del-meet="${m.id}" title="Remove">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-      </button>
+      <div class="flex items-center gap-1">
+        <button class="btn-icon" data-fwd-meet="${m.id}" title="Forward to team">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+        </button>
+        <button class="btn-icon" data-del-meet="${m.id}" title="Remove">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
     </div>
   `).join('') + `<button class="btn-ghost w-full justify-center mt-2" id="add-meet-manual">+ Add manually</button>`;
   el.querySelectorAll('[data-del-meet]').forEach(b => b.onclick = () => {
     set(STORE.MEETINGS, get(STORE.MEETINGS, []).filter(x => x.id !== b.dataset.delMeet));
     renderMeetings();
   });
+  el.querySelectorAll('[data-fwd-meet]').forEach(b => b.onclick = () => openForwardMeetingModal(b.dataset.fwdMeet));
   document.getElementById('add-meet-manual').onclick = () => openMeetingModal();
+}
+
+/* ============================================================
+ *  FORWARD MEETING — sends a calendar invite (.ics) to teammates
+ *  Generates an RFC-5545 .ics file and:
+ *    - downloads it (so user can attach if mail client strips it)
+ *    - opens mailto: pre-filled with recipients + meeting details
+ *  Most desktop mail clients (Gmail web, Outlook, Apple Mail) will
+ *  auto-recognize a pasted .ics or treat it as a calendar invite.
+ * ============================================================ */
+function buildICS(m) {
+  const dt = m.date.replace(/-/g, '');
+  const stamp = new Date().toISOString().replace(/[-:.]/g,'').slice(0,15) + 'Z';
+  const desc = (m.link ? `Join: ${m.link}\\n` : '') + (m.location ? `Where: ${m.location}` : '');
+  const loc = m.location || m.link || '';
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Command Center//Saurav//EN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:${m.id}@command-center`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART;VALUE=DATE:${dt}`,
+    `DTEND;VALUE=DATE:${dt}`,
+    `SUMMARY:${(m.name||'').replace(/[\r\n,;]/g,' ')}`,
+    `DESCRIPTION:${desc.replace(/[\r\n]/g,'\\n')}`,
+    `LOCATION:${loc.replace(/[\r\n,;]/g,' ')}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+}
+function openForwardMeetingModal(meetId) {
+  const m = get(STORE.MEETINGS, []).find(x => x.id === meetId); if (!m) return;
+  const team = get(STORE.TEAM, []);
+  if (!team.length) {
+    toast('Upload your team Excel first to forward meetings.', 'warn');
+    return;
+  }
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Forward meeting</h3>
+      <p class="text-eb-muted text-[13px] mb-4">
+        Send "<b class="text-eb-ink">${escapeHtml(m.name)}</b>" as a calendar invite to selected teammates.
+      </p>
+      <div class="space-y-2 max-h-64 overflow-y-auto nice-scroll border border-eb-line rounded-lg p-3 mb-4">
+        ${team.map(p => `
+          <label class="flex items-center gap-2 text-[14px] cursor-pointer hover:bg-eb-paper2 px-2 py-1 rounded">
+            <input type="checkbox" class="fwd-check" value="${escapeHtml(p.email)}" data-name="${escapeHtml(p.name)}" />
+            <span class="font-medium text-eb-ink">${escapeHtml(p.name)}</span>
+            <span class="text-eb-muted text-[12px]">${escapeHtml(p.email)}</span>
+          </label>
+        `).join('')}
+      </div>
+      <label class="lbl">Note to recipients (optional)</label>
+      <textarea id="fwd-note" class="input" rows="3" placeholder="Adding you to this meeting — please join."></textarea>
+      <div class="bg-eb-paper2 border border-eb-line rounded-lg p-3 text-[12px] text-eb-muted mt-4">
+        <b class="text-eb-ink">How it works:</b> A <code>.ics</code> calendar invite file downloads automatically,
+        and your mail client opens with the recipients and details pre-filled. Attach the downloaded
+        <code>.ics</code> file so the meeting drops into their calendar.
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="fwd-send">Forward invite</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('fwd-send').onclick = () => {
+    const checks = [...document.querySelectorAll('.fwd-check:checked')];
+    if (!checks.length) return toast('Pick at least one teammate', 'warn');
+    const emails = checks.map(c => c.value);
+    const names = checks.map(c => c.dataset.name);
+    const note = document.getElementById('fwd-note').value.trim();
+
+    const ics = buildICS(m);
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${(m.name||'meeting').replace(/[^\w-]+/g,'_')}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+    const subject = `Invite: ${m.name}`;
+    const body =
+`Hi ${names.length === 1 ? names[0].split(' ')[0] : 'team'},
+
+${note ? note + '\n\n' : ''}Forwarding the meeting below — please add to your calendar (the .ics file is attached / just downloaded to my machine; attach it to this draft before sending).
+
+Meeting: ${m.name}
+Date: ${new Date(m.date).toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}
+${m.link ? `Join link: ${m.link}` : ''}${m.location ? `\nLocation: ${m.location}` : ''}
+
+Thanks,
+Saurav`;
+    window.location.href = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    closeModal();
+    toast(`Invite drafted for ${names.length} teammate${names.length>1?'s':''}`);
+  };
 }
 function openMeetingModal() {
   showModal(`
@@ -748,7 +860,13 @@ function renderTodoCalendar() {
     cells.push({ day, muted: true, iso: null });
   }
 
+  const rangeFrom = _calState.from || '';
+  const rangeTo = _calState.to || '';
   pop.innerHTML = `
+    <div class="cal-range">
+      <div><label>From</label><input type="date" data-cal-from value="${rangeFrom}" /></div>
+      <div><label>To</label><input type="date" data-cal-to value="${rangeTo}" /></div>
+    </div>
     <div class="cal-head">
       <button class="cal-nav" data-cal-prev aria-label="Previous month">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
@@ -765,11 +883,17 @@ function renderTodoCalendar() {
         if (c.muted) cls.push('muted');
         if (c.iso === todayIso) cls.push('today');
         if (c.iso && todoSelectedDates.includes(c.iso)) cls.push('selected');
+        if (c.iso && rangeFrom && rangeTo && c.iso >= rangeFrom && c.iso <= rangeTo && !todoSelectedDates.includes(c.iso)) {
+          cls.push('in-range');
+          if (c.iso === rangeFrom) cls.push('range-start');
+          if (c.iso === rangeTo) cls.push('range-end');
+        }
         return `<div class="${cls.join(' ')}" ${c.iso ? `data-cal-day="${c.iso}"` : ''}>${c.day}</div>`;
       }).join('')}
     </div>
     <div class="cal-foot">
       <button data-cal-clear>Clear</button>
+      <button data-cal-apply-range>Apply range</button>
       <button data-cal-today>Today</button>
     </div>
   `;
@@ -784,12 +908,26 @@ function renderTodoCalendar() {
     renderTodoCalendar();
   };
   pop.querySelector('[data-cal-clear]').onclick = () => {
-    todoSelectedDates = []; renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+    todoSelectedDates = []; _calState.from = ''; _calState.to = '';
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
   };
   pop.querySelector('[data-cal-today]').onclick = () => {
     const now = new Date();
     _calState.year = now.getFullYear(); _calState.month = now.getMonth();
     renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-from]').onchange = (e) => { _calState.from = e.target.value; renderTodoCalendar(); };
+  pop.querySelector('[data-cal-to]').onchange   = (e) => { _calState.to   = e.target.value; renderTodoCalendar(); };
+  pop.querySelector('[data-cal-apply-range]').onclick = () => {
+    const f = _calState.from, t = _calState.to;
+    if (!f || !t) return toast('Pick both From and To dates', 'warn');
+    if (f > t)    return toast('"From" must be on/before "To"', 'warn');
+    const start = new Date(f), end = new Date(t);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
+      const iso = d.toISOString().slice(0,10);
+      if (!todoSelectedDates.includes(iso)) todoSelectedDates.push(iso);
+    }
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
   };
   pop.querySelectorAll('[data-cal-day]').forEach(d => d.onclick = () => {
     const iso = d.dataset.calDay;
