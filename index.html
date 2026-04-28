@@ -12,6 +12,9 @@
 <!-- SheetJS for Excel parsing (team-member upload) -->
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
+<!-- Supabase client — pulls partner_tasks into the dashboard To-Do -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
 <!-- Inter for body, Space Grotesk for display — Elecbits-aligned, modern, technical -->
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -407,8 +410,16 @@ const STORE = {
   COMM_LOG:   'cc_comm_log_v1',      // [{taskId, to, subject, body, ts, direction}]
   CAL_TOKEN:  'cc_gcal_token_v1',    // future Google OAuth token
   USER:       'cc_user_v1',
+  PARTNER_TASKS:    'cc_partner_tasks_v1',   // mirror of Supabase partner_tasks
+  PARTNERS:         'cc_partners_v1',        // mirror of Supabase partners
 };
 const CURRENT_USER = 'Saurav'; // assignment-match name (case-insensitive)
+
+/* Supabase — same project as Partnership & Sales page so the dashboard
+   To-Do can surface partner_tasks assigned to the current user. */
+const SUPABASE_URL = 'https://ogfonkaeucojbqutrorc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nZm9ua2FldWNvamJxdXRyb3JjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzY4MzQsImV4cCI6MjA5Mjg1MjgzNH0.FeXwxD3RBE_2sYYAjsGQ6op06gcOh_F00FilGO87U2w';
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const get = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
 const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
@@ -831,7 +842,68 @@ function renderTodoPills() {
     renderTodoPills(); renderTodos();
   });
 }
-function toggleTaskResolved(taskId) {
+/* Pull partner_tasks (and the partners they belong to) from Supabase so
+   anything assigned to the current user surfaces on the dashboard To-Do.
+   Cached in localStorage so the panel renders immediately on next load. */
+async function loadPartnerTasksFromSupabase() {
+  if (!sb) return;
+  try {
+    const [P, T] = await Promise.all([
+      sb.from('partners').select('id,name'),
+      sb.from('partner_tasks').select('*'),
+    ]);
+    if (P.error) throw P.error;
+    if (T.error) throw T.error;
+    set(STORE.PARTNERS, P.data || []);
+    set(STORE.PARTNER_TASKS, T.data || []);
+    renderTodos();
+  } catch (err) {
+    console.warn('Could not load partner tasks from Supabase:', err.message);
+  }
+}
+
+/* Adapt a partner_tasks row into the same shape the dashboard renderers expect.
+   Prefix the id with "pt:" so we can route resolve/click back to the right store. */
+function partnerTaskAsTodo(row, partnersById) {
+  const partnerName = partnersById[row.partner_id] || 'Partnership & Sales';
+  return {
+    id: 'pt:' + row.id,
+    _source: 'partner',
+    _rawId: row.id,
+    title: row.title,
+    assignee: row.assignee || '',
+    vertical: 'Partner · ' + partnerName,
+    deadline: row.end_date || '',
+    subtasks: (row.subtasks || []).map(s => s.text || s).filter(Boolean),
+    documents: row.attachment_name ? [{ name: row.attachment_name, url: '#' }] : [],
+    content: row.description || '',
+    resolved: !!row.resolved,
+  };
+}
+
+/* Resolve a task no matter which store it came from. Local tasks live in
+   cc_tasks_v1; partner tasks live in Supabase (mirrored to cc_partner_tasks_v1). */
+async function toggleTaskResolved(taskId) {
+  if (taskId.startsWith('pt:')) {
+    const realId = taskId.slice(3);
+    const list = get(STORE.PARTNER_TASKS, []);
+    const row = list.find(x => x.id === realId); if (!row) return;
+    const newVal = !row.resolved;
+    row.resolved = newVal;
+    set(STORE.PARTNER_TASKS, list);
+    renderTodos();
+    if (sb) {
+      const { error } = await sb.from('partner_tasks').update({ resolved: newVal }).eq('id', realId);
+      if (error) {
+        row.resolved = !newVal;
+        set(STORE.PARTNER_TASKS, list);
+        renderTodos();
+        return toast('Could not save: ' + error.message, 'danger');
+      }
+    }
+    toast(newVal ? 'Marked as resolved' : 'Reopened');
+    return;
+  }
   const all = get(STORE.TASKS, []);
   const t = all.find(x => x.id === taskId); if (!t) return;
   t.resolved = !t.resolved;
@@ -841,8 +913,17 @@ function toggleTaskResolved(taskId) {
   toast(t.resolved ? 'Marked as resolved' : 'Reopened');
 }
 
+function getMergedTodos() {
+  const local = get(STORE.TASKS, []);
+  const partnerRows = get(STORE.PARTNER_TASKS, []);
+  const partners = get(STORE.PARTNERS, []);
+  const partnersById = Object.fromEntries(partners.map(p => [p.id, p.name]));
+  const partnerTodos = partnerRows.map(r => partnerTaskAsTodo(r, partnersById));
+  return [...local, ...partnerTodos];
+}
+
 function renderTodos() {
-  const all = get(STORE.TASKS, []);
+  const all = getMergedTodos();
   let mine = all.filter(t => (t.assignee || '').toLowerCase() === CURRENT_USER.toLowerCase());
   if (todoSelectedDates.length) mine = mine.filter(t => todoSelectedDates.includes(t.deadline));
   // Unresolved first (by deadline asc), resolved at the bottom (also by deadline asc)
@@ -860,12 +941,13 @@ function renderTodos() {
     const dueLabel = resolved
       ? `<span class="text-[11px] font-semibold text-eb-muted">Resolved</span>`
       : `<span class="text-[11px] font-semibold ${d<0?'text-eb-danger':d<=2?'text-eb-warn':'text-eb-muted'}">${d<0?Math.abs(d)+'d late':d===0?'today':d+'d'}</span>`;
+    const dueText = t.deadline ? new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '—';
     return `
       <div class="task-row ${resolved?'resolved':''}" data-task="${t.id}">
         <span class="dot ${dotCls}"></span>
         <div class="flex-1 min-w-0">
           <div class="task-title font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
-          <div class="text-[11px] text-eb-muted">${escapeHtml(t.vertical || '—')} · due ${new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</div>
+          <div class="text-[11px] text-eb-muted">${escapeHtml(t.vertical || '—')} · due ${dueText}</div>
         </div>
         ${dueLabel}
         <button class="btn-resolve ${resolved?'is-resolved':''}" data-resolve="${t.id}" title="${resolved?'Reopen task':'Mark as resolved'}">
@@ -1107,7 +1189,20 @@ document.getElementById('team-file-input').onchange = async (e) => {
  *  TASK DETAIL MODAL (used by both lists)
  * ============================================================ */
 function openTaskModal(taskId, isAssignedToOthers) {
-  const t = get(STORE.TASKS, []).find(x => x.id === taskId); if (!t) return;
+  // Partner tasks (id prefixed "pt:") come from Supabase via the merged To-Do list.
+  let t;
+  if (taskId.startsWith('pt:')) {
+    const realId = taskId.slice(3);
+    const partners = get(STORE.PARTNERS, []);
+    const partnersById = Object.fromEntries(partners.map(p => [p.id, p.name]));
+    const row = get(STORE.PARTNER_TASKS, []).find(x => x.id === realId);
+    if (!row) return;
+    t = partnerTaskAsTodo(row, partnersById);
+    isAssignedToOthers = false; // no email/comm log on partner tasks here
+  } else {
+    t = get(STORE.TASKS, []).find(x => x.id === taskId);
+    if (!t) return;
+  }
   const log = get(STORE.COMM_LOG, []).filter(l => l.taskId === taskId);
   const resolved = !!t.resolved;
   showModal(`
@@ -1273,6 +1368,10 @@ function init() {
   refreshAssigneeOptions();
   renderTodos();
   renderAssigned();
+
+  // Pull partner_tasks from Supabase so tasks created on the Partnership
+  // & Sales page also appear here. Renders again once data lands.
+  loadPartnerTasksFromSupabase();
 
   // Re-tick countdowns each minute (keeps numbers fresh without reload)
   setInterval(renderCountdowns, 60_000);
