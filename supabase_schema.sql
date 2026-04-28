@@ -47,9 +47,13 @@ create table if not exists public.partner_tasks (
   description     text,
   attachment_name text,
   attachment_path text,                                -- key in storage bucket
+  resolved        boolean default false,
   created_at      timestamptz default now()
 );
 create index if not exists partner_tasks_partner_idx on public.partner_tasks(partner_id);
+
+-- Backfill: add `resolved` column if this table was created before the field existed.
+alter table public.partner_tasks add column if not exists resolved boolean default false;
 
 create table if not exists public.partner_emails (
   id          uuid primary key default gen_random_uuid(),

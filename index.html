@@ -125,6 +125,20 @@
   }
   .task-row:hover { background: #F7F9FC; }
   .task-row:last-child { border-bottom: none; }
+  .task-row.resolved { background: #FAFBFC; opacity: .55; }
+  .task-row.resolved .task-title { text-decoration: line-through; color: #5A6B85; }
+  .task-row.resolved .dot { background: #CBD5E1 !important; }
+
+  /* Resolve toggle (round check) */
+  .btn-resolve {
+    width: 26px; height: 26px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; border: 1.5px solid #CBD5E1; background: #fff;
+    color: #5A6B85; transition: all .15s ease; cursor: pointer;
+  }
+  .btn-resolve:hover { border-color: #10B981; color: #10B981; background: rgba(16,185,129,.08); }
+  .btn-resolve.is-resolved { background: #10B981; border-color: #10B981; color: #fff; }
+  .btn-resolve.is-resolved:hover { background: #0E9E73; border-color: #0E9E73; color: #fff; }
 
   /* Buttons */
   .btn-primary {
@@ -817,27 +831,55 @@ function renderTodoPills() {
     renderTodoPills(); renderTodos();
   });
 }
+function toggleTaskResolved(taskId) {
+  const all = get(STORE.TASKS, []);
+  const t = all.find(x => x.id === taskId); if (!t) return;
+  t.resolved = !t.resolved;
+  set(STORE.TASKS, all);
+  renderTodos();
+  renderAssigned();
+  toast(t.resolved ? 'Marked as resolved' : 'Reopened');
+}
+
 function renderTodos() {
   const all = get(STORE.TASKS, []);
   let mine = all.filter(t => (t.assignee || '').toLowerCase() === CURRENT_USER.toLowerCase());
   if (todoSelectedDates.length) mine = mine.filter(t => todoSelectedDates.includes(t.deadline));
-  mine.sort((a,b) => (a.deadline || '').localeCompare(b.deadline || ''));
+  // Unresolved first (by deadline asc), resolved at the bottom (also by deadline asc)
+  mine.sort((a,b) => {
+    const ar = a.resolved ? 1 : 0, br = b.resolved ? 1 : 0;
+    if (ar !== br) return ar - br;
+    return (a.deadline || '').localeCompare(b.deadline || '');
+  });
   const el = document.getElementById('todo-list');
   if (!mine.length) { el.innerHTML = `<div class="empty m-3">Nothing on your plate for these dates. Enjoy a clear runway.</div>`; return; }
   el.innerHTML = mine.map(t => {
     const d = daysUntil(t.deadline);
     const dotCls = d < 0 ? 'bg-eb-danger' : d <= 2 ? 'bg-eb-warn' : 'bg-eb-ok';
+    const resolved = !!t.resolved;
+    const dueLabel = resolved
+      ? `<span class="text-[11px] font-semibold text-eb-muted">Resolved</span>`
+      : `<span class="text-[11px] font-semibold ${d<0?'text-eb-danger':d<=2?'text-eb-warn':'text-eb-muted'}">${d<0?Math.abs(d)+'d late':d===0?'today':d+'d'}</span>`;
     return `
-      <div class="task-row" data-task="${t.id}">
+      <div class="task-row ${resolved?'resolved':''}" data-task="${t.id}">
         <span class="dot ${dotCls}"></span>
         <div class="flex-1 min-w-0">
-          <div class="font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
+          <div class="task-title font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
           <div class="text-[11px] text-eb-muted">${escapeHtml(t.vertical || '—')} · due ${new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</div>
         </div>
-        <span class="text-[11px] font-semibold ${d<0?'text-eb-danger':d<=2?'text-eb-warn':'text-eb-muted'}">${d<0?Math.abs(d)+'d late':d===0?'today':d+'d'}</span>
+        ${dueLabel}
+        <button class="btn-resolve ${resolved?'is-resolved':''}" data-resolve="${t.id}" title="${resolved?'Reopen task':'Mark as resolved'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
       </div>`;
   }).join('');
-  el.querySelectorAll('[data-task]').forEach(r => r.onclick = () => openTaskModal(r.dataset.task, false));
+  el.querySelectorAll('[data-task]').forEach(r => r.onclick = (e) => {
+    if (e.target.closest('[data-resolve]')) return;
+    openTaskModal(r.dataset.task, false);
+  });
+  el.querySelectorAll('[data-resolve]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); toggleTaskResolved(b.dataset.resolve);
+  });
 }
 document.getElementById('todo-clear-dates').onclick = () => {
   todoSelectedDates = []; renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
@@ -993,7 +1035,11 @@ function renderAssigned() {
   // any task whose assignee is in the team (i.e. NOT Saurav himself)
   let assigned = all.filter(t => t.assignee && t.assignee.toLowerCase() !== CURRENT_USER.toLowerCase());
   if (filter) assigned = assigned.filter(t => t.assignee === filter);
-  assigned.sort((a,b)=>(a.deadline||'').localeCompare(b.deadline||''));
+  assigned.sort((a,b) => {
+    const ar = a.resolved ? 1 : 0, br = b.resolved ? 1 : 0;
+    if (ar !== br) return ar - br;
+    return (a.deadline||'').localeCompare(b.deadline||'');
+  });
 
   const el = document.getElementById('assigned-list');
   if (!assigned.length) {
@@ -1003,23 +1049,30 @@ function renderAssigned() {
   el.innerHTML = assigned.map(t => {
     const d = daysUntil(t.deadline);
     const dotCls = d < 0 ? 'bg-eb-danger' : d <= 2 ? 'bg-eb-warn' : 'bg-eb-ok';
+    const resolved = !!t.resolved;
     return `
-      <div class="task-row" data-task="${t.id}">
+      <div class="task-row ${resolved?'resolved':''}" data-task="${t.id}">
         <span class="dot ${dotCls}"></span>
         <div class="flex-1 min-w-0">
-          <div class="font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
+          <div class="task-title font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
           <div class="text-[11px] text-eb-muted">${escapeHtml(t.assignee)} · ${escapeHtml(t.vertical||'—')} · due ${new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</div>
         </div>
         <button class="btn-icon" data-ping="${t.id}" title="Ask for an update by email">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
         </button>
+        <button class="btn-resolve ${resolved?'is-resolved':''}" data-resolve="${t.id}" title="${resolved?'Reopen task':'Mark as resolved'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
       </div>`;
   }).join('');
   el.querySelectorAll('[data-task]').forEach(r => r.onclick = (e) => {
-    if (e.target.closest('[data-ping]')) return;
+    if (e.target.closest('[data-ping]') || e.target.closest('[data-resolve]')) return;
     openTaskModal(r.dataset.task, true);
   });
   el.querySelectorAll('[data-ping]').forEach(b => b.onclick = (e) => { e.stopPropagation(); pingForUpdate(b.dataset.ping); });
+  el.querySelectorAll('[data-resolve]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); toggleTaskResolved(b.dataset.resolve);
+  });
 }
 document.getElementById('assignee-filter').onchange = renderAssigned;
 
@@ -1056,11 +1109,15 @@ document.getElementById('team-file-input').onchange = async (e) => {
 function openTaskModal(taskId, isAssignedToOthers) {
   const t = get(STORE.TASKS, []).find(x => x.id === taskId); if (!t) return;
   const log = get(STORE.COMM_LOG, []).filter(l => l.taskId === taskId);
+  const resolved = !!t.resolved;
   showModal(`
     <div class="p-6">
       <div class="flex items-start justify-between gap-4 mb-1">
-        <h3 class="font-display font-bold text-xl text-eb-ink">${escapeHtml(t.title)}</h3>
-        <span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-eb-paper2 text-eb-muted">${escapeHtml(t.vertical||'General')}</span>
+        <h3 class="font-display font-bold text-xl text-eb-ink ${resolved?'line-through opacity-60':''}">${escapeHtml(t.title)}</h3>
+        <div class="flex items-center gap-2">
+          ${resolved ? `<span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-emerald-100 text-emerald-700" style="background:rgba(16,185,129,.12); color:#0E9E73;">Resolved</span>` : ''}
+          <span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-eb-paper2 text-eb-muted">${escapeHtml(t.vertical||'General')}</span>
+        </div>
       </div>
       <div class="text-[13px] text-eb-muted mb-5">
         Assigned to <b class="text-eb-ink">${escapeHtml(t.assignee||'—')}</b> · Deadline
@@ -1093,10 +1150,12 @@ function openTaskModal(taskId, isAssignedToOthers) {
           </div>`).join('')}</div>` : `<div class="text-[13px] text-eb-muted">No messages yet. Use "Request update" to start a thread.</div>`}
       </section>
       <div class="flex justify-end gap-2 mt-5">
+        <button class="btn-ghost" id="task-resolve-toggle">${resolved?'Reopen task':'Mark as resolved'}</button>
         <button class="btn-ghost" data-close>Close</button>
         <button class="btn-primary" id="task-ping">Request update</button>
       </div>` : `
       <div class="flex justify-end gap-2 mt-5">
+        <button class="btn-ghost" id="task-resolve-toggle">${resolved?'Reopen task':'Mark as resolved'}</button>
         <button class="btn-ghost" data-close>Close</button>
       </div>`}
     </div>
@@ -1104,6 +1163,9 @@ function openTaskModal(taskId, isAssignedToOthers) {
   if (isAssignedToOthers) {
     document.getElementById('task-ping').onclick = () => { closeModal(); pingForUpdate(taskId); };
   }
+  document.getElementById('task-resolve-toggle').onclick = () => {
+    toggleTaskResolved(taskId); closeModal();
+  };
 }
 
 /* ============================================================
