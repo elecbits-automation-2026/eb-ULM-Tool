@@ -412,6 +412,7 @@ function seedIfEmpty() {
   }
   if (!localStorage.getItem(STORE.MEETINGS)) {
     set(STORE.MEETINGS, [
+    
       { id: uid(), date: addDays(0),  name: 'Investor sync — Sequoia',   link: 'https://meet.google.com/abc-defg-hij', location: '' },
       { id: uid(), date: addDays(1),  name: 'Ops review — Gurugram',     link: '', location: 'STPI - 30, Electronic City Phase IV, Gurugram' },
       { id: uid(), date: addDays(2),  name: 'Bosch supplier call',       link: 'https://meet.google.com/xyz-abcd-efg', location: '' },
@@ -491,10 +492,13 @@ function renderVerticalNav() {
       <svg class="opacity-0 group-hover:opacity-100 transition" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
     </button>
   `).join('');
+  const ROUTES = {
+    'partnership-sales': 'partnership-sales.html',
+  };
   root.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.key;
-      // FUTURE: route to /pages/<key>.html. For now, surface friendly notice.
+      if (ROUTES[key]) { window.location.href = ROUTES[key]; return; }
       toast(`"${VERTICALS.find(v=>v.key===key).name}" page coming next — let me know when to build it.`, 'ok');
     });
   });

@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Partnership & Sales — Command Center</title>
+<meta name="description" content="Partnership & Sales workspace" />
+
+<script src="https://cdn.tailwindcss.com"></script>
+<!-- Supabase JS client -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          eb: {
+            ink:'#0A1628', ink2:'#142540',
+            blue:'#1E6BFF', blueHi:'#4A8BFF', blueLo:'#0E4FCC', cyan:'#00C2FF',
+            paper:'#F7F9FC', paper2:'#EEF2F8', line:'#E2E8F2', muted:'#5A6B85',
+            ok:'#10B981', warn:'#F59E0B', danger:'#EF4444',
+          }
+        },
+        fontFamily: {
+          sans:['Inter','system-ui','sans-serif'],
+          display:['"Space Grotesk"','Inter','sans-serif'],
+        },
+        boxShadow: {
+          card:'0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05)',
+          cardH:'0 2px 4px rgba(10,22,40,.06), 0 12px 28px rgba(10,22,40,.10)',
+        }
+      }
+    }
+  };
+</script>
+
+<style>
+  html, body { background:#F7F9FC; }
+  body { font-family:'Inter', system-ui, sans-serif; color:#0A1628; }
+  .font-display { font-family:'Space Grotesk', Inter, sans-serif; letter-spacing:-0.01em; }
+
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image:radial-gradient(circle at 1px 1px, rgba(10,22,40,.05) 1px, transparent 0);
+    background-size:24px 24px; opacity:.5;
+  }
+  #app { position:relative; z-index:1; }
+
+  .nav-btn {
+    position:relative; display:flex; align-items:center; gap:12px;
+    padding:14px 16px; border-radius:10px;
+    background:transparent; color:#CBD5E1; transition:all .18s ease; cursor:pointer;
+    border:1px solid transparent; font-weight:500; font-size:14px;
+    width:100%; text-align:left;
+  }
+  .nav-btn:hover { background:rgba(30,107,255,.10); color:#fff; border-color:rgba(30,107,255,.25); }
+  .nav-btn:hover .nav-icon { color:#4A8BFF; }
+  .nav-btn::before {
+    content:''; position:absolute; left:0; top:25%; bottom:25%; width:3px;
+    background:#1E6BFF; border-radius:0 2px 2px 0;
+    transform:scaleY(0); transition:transform .18s ease; transform-origin:center;
+  }
+  .nav-btn:hover::before, .nav-btn.active::before { transform:scaleY(1); }
+  .nav-btn.active { background:rgba(30,107,255,.15); color:#fff; border-color:rgba(30,107,255,.35); }
+  .nav-btn.active .nav-icon { color:#4A8BFF; }
+  .nav-icon { color:#64748B; transition:color .18s ease; flex-shrink:0; }
+
+  .panel { background:#fff; border:1px solid #E2E8F2; border-radius:14px; box-shadow:0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05); }
+
+  .btn-primary {
+    background:#1E6BFF; color:#fff; padding:8px 14px; border-radius:8px;
+    font-weight:500; font-size:13px; transition:all .15s ease;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .btn-primary:hover { background:#0E4FCC; transform:translateY(-1px); box-shadow:0 4px 10px rgba(30,107,255,.30); }
+  .btn-ghost {
+    background:transparent; color:#0A1628; padding:6px 12px; border:1px solid #E2E8F2;
+    border-radius:8px; font-weight:500; font-size:13px; transition:all .15s ease;
+    display:inline-flex; align-items:center; gap:6px;
+  }
+  .btn-ghost:hover { border-color:#1E6BFF; color:#1E6BFF; background:rgba(30,107,255,.04); }
+  .btn-icon {
+    width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center;
+    border-radius:8px; border:1px solid #E2E8F2; background:#fff; transition:all .15s ease; cursor:pointer;
+  }
+  .btn-icon:hover { border-color:#1E6BFF; color:#1E6BFF; }
+  .btn-add-circle {
+    width:28px; height:28px; border-radius:999px; background:#1E6BFF; color:#fff;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .15s ease; border:none;
+  }
+  .btn-add-circle:hover { background:#0E4FCC; transform:scale(1.05); }
+
+  .input {
+    width:100%; padding:10px 12px; border:1px solid #E2E8F2; border-radius:8px;
+    background:#fff; font-size:14px; color:#0A1628; transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  .input:focus { outline:none; border-color:#1E6BFF; box-shadow:0 0 0 3px rgba(30,107,255,.12); }
+  label.lbl { display:block; font-size:12px; font-weight:600; color:#5A6B85; margin-bottom:6px; text-transform:uppercase; letter-spacing:.04em; }
+
+  .modal-back { position:fixed; inset:0; background:rgba(10,22,40,.55); z-index:50;
+    display:flex; align-items:center; justify-content:center; padding:16px;
+    backdrop-filter:blur(4px); animation:fadeIn .15s ease; }
+  .modal-card { background:#fff; border-radius:16px; width:100%; max-width:560px;
+    box-shadow:0 20px 60px rgba(10,22,40,.30); animation:pop .18s ease;
+    max-height:92vh; overflow-y:auto; }
+  .modal-card.lg  { max-width:760px; }
+  .modal-card.xl  { max-width:920px; }
+  @keyframes fadeIn { from{opacity:0} to{opacity:1} }
+  @keyframes pop { from{opacity:0; transform:translateY(8px) scale(.98)} to{opacity:1; transform:translateY(0) scale(1)} }
+
+  .nice-scroll::-webkit-scrollbar { width:6px; height:6px; }
+  .nice-scroll::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:3px; }
+  .nice-scroll::-webkit-scrollbar-track { background:transparent; }
+
+  .fade-up { opacity:0; transform:translateY(8px); animation:fadeUp .5s ease forwards; }
+  @keyframes fadeUp { to { opacity:1; transform:translateY(0); } }
+
+  .empty {
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:24px 16px; color:#5A6B85; text-align:center; font-size:13px;
+    border:1px dashed #CBD5E1; border-radius:10px; background:#F7F9FC;
+  }
+
+  /* Now-showing big header */
+  .now-showing-bar {
+    background:linear-gradient(135deg, #0A1628 0%, #142540 60%, #1E6BFF 180%);
+    color:#fff; border-radius:18px; padding:22px 28px;
+    box-shadow:0 8px 24px rgba(10,22,40,.18);
+    position:relative; overflow:hidden;
+  }
+  .now-showing-bar::after {
+    content:''; position:absolute; top:0; right:0; width:280px; height:100%;
+    background:radial-gradient(circle at top right, rgba(0,194,255,.18), transparent 60%);
+    pointer-events:none;
+  }
+  .ns-eyebrow { font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:#9DB5E1; font-weight:600; margin-bottom:6px; }
+  .ns-line { font-family:'Space Grotesk', Inter, sans-serif; font-weight:700; font-size:30px; line-height:1.15; letter-spacing:-.01em; }
+  .ns-name-select {
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.20);
+    color:#fff; font-family:'Space Grotesk', Inter, sans-serif; font-weight:700;
+    font-size:30px; padding:2px 36px 2px 12px; border-radius:10px;
+    appearance:none; -webkit-appearance:none; cursor:pointer; min-width:240px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'><path d='m6 9 6 6 6-6'/></svg>");
+    background-repeat:no-repeat; background-position:right 12px center;
+  }
+  .ns-name-select:focus { outline:none; border-color:#fff; }
+  .ns-name-select option { background:#0A1628; color:#fff; }
+  .ns-divider { color:#5A6B85; margin:0 14px; opacity:.7; font-weight:300; }
+  .ns-meta-strong { color:#00C2FF; }
+
+  /* Priority pills */
+  .pri-pill {
+    display:flex; align-items:center; gap:8px; padding:10px 12px; border-radius:10px;
+    font-size:13px; font-weight:500; line-height:1.3;
+    border:1px solid transparent;
+  }
+  .pri-high { background:rgba(16,185,129,.14); color:#0a7e5b; border-color:rgba(16,185,129,.30); }
+  .pri-med  { background:rgba(245,158,11,.14); color:#a25b00; border-color:rgba(245,158,11,.32); }
+  .pri-low  { background:rgba(250,204,21,.18); color:#7a5a00; border-color:rgba(250,204,21,.40); }
+  .pri-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+  .pri-dot.h { background:#10B981; }
+  .pri-dot.m { background:#F59E0B; }
+  .pri-dot.l { background:#FACC15; }
+
+  /* Data card */
+  .stat-card {
+    background:#fff; border:1px solid #E2E8F2; border-radius:12px;
+    padding:14px; transition:transform .15s ease, box-shadow .15s ease;
+    display:flex; flex-direction:column; justify-content:space-between; min-height:108px;
+    position:relative; overflow:hidden;
+  }
+  .stat-card:hover { transform:translateY(-2px); box-shadow:0 8px 18px rgba(10,22,40,.08); }
+  .stat-card::after {
+    content:''; position:absolute; top:0; right:0; width:50px; height:50px;
+    background:radial-gradient(circle at top right, rgba(30,107,255,.10), transparent 70%);
+    pointer-events:none;
+  }
+  .stat-title { font-size:11px; font-weight:600; color:#5A6B85; text-transform:uppercase; letter-spacing:.06em; }
+  .stat-value { font-family:'Space Grotesk'; font-weight:700; font-size:24px; color:#0A1628; line-height:1.1; letter-spacing:-.01em; }
+  .stat-unit { font-size:13px; color:#5A6B85; font-weight:500; margin-left:4px; }
+
+  /* SPOC card */
+  .spoc-card {
+    background:linear-gradient(160deg, #fff 0%, #F7F9FC 100%);
+    border:1px solid #E2E8F2; border-radius:14px; padding:18px;
+  }
+  .spoc-row { display:flex; align-items:center; gap:8px; font-size:13px; color:#0A1628; padding:6px 0; }
+  .spoc-row svg { color:#5A6B85; flex-shrink:0; }
+  .spoc-row span { word-break:break-word; }
+
+  /* Task / comm rows */
+  .task-row-grid { display:grid; grid-template-columns:1.6fr 1fr 1fr 1fr; gap:0; }
+  .task-cell { padding:10px 12px; border-bottom:1px solid #EEF2F8; font-size:13px; color:#0A1628; }
+  .task-cell.head { background:#F7F9FC; font-size:11px; font-weight:600; color:#5A6B85; text-transform:uppercase; letter-spacing:.06em; padding:10px 12px; }
+
+  .comm-row { padding:10px 12px; border-bottom:1px solid #EEF2F8; cursor:pointer; transition:background .12s ease; }
+  .comm-row:hover { background:#F7F9FC; }
+  .comm-row:last-child { border-bottom:none; }
+  .comm-detail { background:#F7F9FC; padding:10px 14px; font-size:12.5px; color:#0A1628; border-bottom:1px solid #EEF2F8; }
+
+  /* Multi-input row helpers */
+  .multi-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+  .multi-row .input { flex:1; }
+  .lvl-btn {
+    padding:6px 10px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer;
+    border:1px solid #E2E8F2; background:#fff; color:#5A6B85; transition:all .15s ease;
+  }
+  .lvl-btn.active.h { background:#10B981; color:#fff; border-color:#10B981; }
+  .lvl-btn.active.m { background:#F59E0B; color:#fff; border-color:#F59E0B; }
+  .lvl-btn.active.l { background:#FACC15; color:#0A1628; border-color:#FACC15; }
+  .lvl-btn:hover { border-color:#1E6BFF; color:#1E6BFF; }
+  .lvl-btn.active:hover { color:inherit; border-color:inherit; }
+
+  .chip-rm {
+    width:28px; height:28px; border-radius:8px; border:1px solid #E2E8F2; background:#fff;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    color:#5A6B85; transition:all .12s ease; flex-shrink:0;
+  }
+  .chip-rm:hover { color:#EF4444; border-color:#EF4444; }
+
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app" class="min-h-screen flex">
+
+  <!-- ============== SIDEBAR ============== -->
+  <aside class="w-[22rem] min-h-screen bg-eb-ink text-white flex flex-col" style="background:linear-gradient(180deg,#0A1628 0%,#142540 100%);">
+    <div class="px-6 pt-7 pb-6 border-b border-white/5">
+      <a href="index.html" class="flex items-center gap-3 hover:opacity-90 transition">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#1E6BFF,#00C2FF);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+        </div>
+        <div>
+          <div class="font-display font-bold text-lg leading-none">Command</div>
+          <div class="font-display text-eb-blueHi text-[11px] tracking-[.18em] uppercase mt-1">Center · v1</div>
+        </div>
+      </a>
+    </div>
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto nice-scroll">
+      <div class="px-3 pb-2 text-[11px] tracking-[.18em] uppercase text-white/40 font-semibold">Verticals</div>
+      <div id="vertical-nav"></div>
+    </nav>
+    <div class="px-5 py-4 border-t border-white/5 flex items-center justify-between text-[12px] text-white/50">
+      <a href="index.html" class="hover:text-white transition flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        Back to dashboard
+      </a>
+    </div>
+  </aside>
+
+  <!-- ============== MAIN ============== -->
+  <main class="flex-1 min-h-screen flex flex-col">
+
+    <!-- Header bar with Now Showing + Add -->
+    <header class="px-8 pt-7 pb-5 fade-up">
+      <div class="flex items-start justify-between gap-4 mb-5">
+        <div>
+          <div class="text-eb-muted text-[11px] tracking-[.22em] uppercase font-semibold mb-1">Vertical</div>
+          <h1 class="font-display text-3xl font-bold text-eb-ink">Partnership &amp; Sales</h1>
+        </div>
+        <button class="btn-primary" id="add-partner-btn" title="Add new partner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          Add
+        </button>
+      </div>
+
+      <div class="now-showing-bar fade-up" id="now-showing-bar"></div>
+    </header>
+
+    <!-- Mid section: Priorities | Data Cards | SPOC -->
+    <section class="px-8 mb-5 fade-up" style="animation-delay:.05s">
+      <div class="grid grid-cols-12 gap-5">
+
+        <!-- Priorities -->
+        <div class="col-span-3 panel p-5">
+          <div class="flex items-center justify-between mb-3">
+            <div>
+              <h2 class="font-display font-bold text-base text-eb-ink">Priorities</h2>
+              <p class="text-[11px] text-eb-muted">With this client</p>
+            </div>
+          </div>
+          <div id="priorities-list" class="space-y-2 max-h-[260px] overflow-y-auto nice-scroll pr-1"></div>
+        </div>
+
+        <!-- Data cards -->
+        <div class="col-span-6">
+          <div id="stat-cards" class="grid grid-cols-5 gap-3 h-full"></div>
+        </div>
+
+        <!-- SPOC -->
+        <div class="col-span-3 spoc-card">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h2 class="font-display font-bold text-base text-eb-ink">SPOC Contact</h2>
+              <p class="text-[11px] text-eb-muted">Single point of contact</p>
+            </div>
+            <div class="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-sm" id="spoc-avatar" style="background:linear-gradient(135deg,#1E6BFF,#00C2FF);">—</div>
+          </div>
+          <div id="spoc-body"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Bottom: Tasks (4 cols) + Communication Log (2 cols) -->
+    <section class="px-8 pb-8 grid grid-cols-6 gap-5 fade-up" style="animation-delay:.1s">
+
+      <!-- Task table — Section 1 -->
+      <div class="col-span-4 panel p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">To-Do</h2>
+            <p class="text-[12px] text-eb-muted">All tasks against this partner</p>
+          </div>
+          <button class="btn-add-circle" id="add-task-btn" title="Add to-do">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+          </button>
+        </div>
+        <div class="task-row-grid">
+          <div class="task-cell head">To-Do</div>
+          <div class="task-cell head">Start Date</div>
+          <div class="task-cell head">End Date</div>
+          <div class="task-cell head">Assignee</div>
+        </div>
+        <div id="task-list" class="task-row-grid border-t border-eb-line max-h-[440px] overflow-y-auto nice-scroll" style="grid-template-columns:1.6fr 1fr 1fr 1fr;"></div>
+      </div>
+
+      <!-- Communication Log — Section 2 (cols 5 & 6) -->
+      <div class="col-span-2 panel p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-display font-bold text-lg text-eb-ink">Communication Log</h2>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <!-- Emails -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[12px] font-semibold uppercase tracking-wide text-eb-muted">Emails</div>
+              <button class="btn-add-circle" id="add-email-btn" title="Log email">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div id="email-list" class="border border-eb-line rounded-lg overflow-hidden max-h-[420px] overflow-y-auto nice-scroll"></div>
+          </div>
+          <!-- MoM -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <div class="text-[12px] font-semibold uppercase tracking-wide text-eb-muted">Minutes of Meeting</div>
+              <button class="btn-add-circle" id="add-mom-btn" title="Log meeting">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+              </button>
+            </div>
+            <div id="mom-list" class="border border-eb-line rounded-lg overflow-hidden max-h-[420px] overflow-y-auto nice-scroll"></div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<!-- Toast & modal mount -->
+<div id="modal-root"></div>
+
+<script>
+/* ============================================================
+ *  PARTNERSHIP & SALES — single-file workspace
+ *  Data layer: Supabase (postgres + storage) with localStorage
+ *  cache so the UI renders instantly while the network round-trip
+ *  is in flight. Schema lives in supabase_schema.sql.
+ * ============================================================ */
+const SUPABASE_URL = 'https://ogfonkaeucojbqutrorc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nZm9ua2FldWNvamJxdXRyb3JjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzY4MzQsImV4cCI6MjA5Mjg1MjgzNH0.FeXwxD3RBE_2sYYAjsGQ6op06gcOh_F00FilGO87U2w';
+const ATTACH_BUCKET = 'partnership-attachments';
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+// Local cache keys — keep data on page so it renders before network returns
+const CACHE = {
+  PARTNERS:        'cc_partners_v1',
+  ACTIVE_PARTNER:  'cc_active_partner_v1',
+  PARTNER_TASKS:   'cc_partner_tasks_v1',
+  PARTNER_EMAILS:  'cc_partner_emails_v1',
+  PARTNER_MOMS:    'cc_partner_moms_v1',
+};
+
+const get = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
+const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const uid = () => 'id_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+const escapeHtml = (s='') => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const todayISO = () => new Date().toISOString().slice(0,10);
+
+// ---- mapping between DB rows and the in-memory shape used by the UI ----
+const fromDbPartner = r => ({
+  id: r.id, name: r.name, relationship_since: r.relationship_since,
+  products: r.products || [], priorities: r.priorities || [],
+  size_unit: r.size_unit, size_value: r.size_value,
+  volume_unit: r.volume_unit, volume_value: r.volume_value,
+  captain: r.captain, spoc_name: r.spoc_name, spoc_designation: r.spoc_designation,
+  spoc_email: r.spoc_email, spoc_phone_country: r.spoc_phone_country, spoc_phone: r.spoc_phone,
+  created_at: r.created_at,
+});
+const toDbPartner = p => ({
+  name: p.name, relationship_since: p.relationship_since || null,
+  products: p.products || [], priorities: p.priorities || [],
+  size_unit: p.size_unit || null, size_value: p.size_value,
+  volume_unit: p.volume_unit || null, volume_value: p.volume_value,
+  captain: p.captain || null, spoc_name: p.spoc_name || null, spoc_designation: p.spoc_designation || null,
+  spoc_email: p.spoc_email || null, spoc_phone_country: p.spoc_phone_country || null, spoc_phone: p.spoc_phone || null,
+});
+const fromDbTask = r => ({
+  id: r.id, partner_id: r.partner_id, title: r.title, subtasks: r.subtasks || [],
+  start_date: r.start_date, end_date: r.end_date, assignee: r.assignee, description: r.description,
+  attachment_name: r.attachment_name, attachment_path: r.attachment_path,
+});
+const fromDbEmail = r => ({
+  id: r.id, partner_id: r.partner_id, date: r.date, subject: r.subject, body: r.body,
+  from_: r.from_addr, to_: r.to_addr,
+});
+const fromDbMoM = r => ({
+  id: r.id, partner_id: r.partner_id, date: r.date, heading: r.heading,
+  attendees: r.attendees, agenda: r.agenda, notes: r.notes, action_items: r.action_items,
+});
+
+// Pull everything for the workspace. Updates the cache, then re-renders.
+async function loadFromSupabase() {
+  if (!sb) return false;
+  try {
+    const [P, T, E, M] = await Promise.all([
+      sb.from('partners').select('*').order('created_at', { ascending: true }),
+      sb.from('partner_tasks').select('*'),
+      sb.from('partner_emails').select('*'),
+      sb.from('partner_moms').select('*'),
+    ]);
+    if (P.error) throw P.error;
+    if (T.error) throw T.error;
+    if (E.error) throw E.error;
+    if (M.error) throw M.error;
+    set(CACHE.PARTNERS,        (P.data||[]).map(fromDbPartner));
+    set(CACHE.PARTNER_TASKS,   (T.data||[]).map(fromDbTask));
+    set(CACHE.PARTNER_EMAILS,  (E.data||[]).map(fromDbEmail));
+    set(CACHE.PARTNER_MOMS,    (M.data||[]).map(fromDbMoM));
+    if (!get(CACHE.ACTIVE_PARTNER, null) && (P.data||[]).length) {
+      set(CACHE.ACTIVE_PARTNER, P.data[0].id);
+    }
+    return true;
+  } catch (err) {
+    console.error('Supabase load failed:', err);
+    toast('Could not reach Supabase — showing cached data', 'warn');
+    return false;
+  }
+}
+
+async function uploadAttachment(file) {
+  if (!sb || !file) return { name: '', path: '' };
+  const safe = file.name.replace(/[^A-Za-z0-9_.\-]+/g,'_');
+  const path = `${Date.now()}_${safe}`;
+  const { error } = await sb.storage.from(ATTACH_BUCKET).upload(path, file, { upsert: false });
+  if (error) { toast('Attachment upload failed: ' + error.message, 'danger'); return { name: file.name, path: '' }; }
+  return { name: file.name, path };
+}
+function attachmentUrl(path) {
+  if (!sb || !path) return '#';
+  return sb.storage.from(ATTACH_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+function toast(msg, type='ok') {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-lg text-white text-sm shadow-lg z-[100]';
+  t.style.background = type==='ok' ? '#10B981' : type==='warn' ? '#F59E0B' : '#EF4444';
+  t.style.animation = 'pop .2s ease';
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2400);
+}
+
+/* ============================================================
+ *  SIDEBAR NAV — same set as landing, current vertical highlighted
+ * ============================================================ */
+const VERTICALS = [
+  { key:'data-repository',         name:'Data Repository',        icon:'M21 8v13H3V8M1 3h22v5H1zM10 12h4' },
+  { key:'partnership-sales',       name:'Partnership & Sales',    icon:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+  { key:'investment',              name:'Investment',             icon:'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
+  { key:'automation',              name:'Automation',             icon:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83' },
+  { key:'execution',               name:'Execution',              icon:'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3' },
+  { key:'physical-infrastructure', name:'Physical Infrastructure',icon:'M3 21h18M5 21V7l8-4v18M19 21V11l-6-4' },
+  { key:'finance',                 name:'Finance',                icon:'M3 3v18h18M7 14l4-4 4 4 6-6' },
+  { key:'hrbp',                    name:'HRBP',                   icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11h-6M19 8v6' },
+  { key:'vision',                  name:'Vision',                 icon:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z' },
+];
+function renderVerticalNav() {
+  const root = document.getElementById('vertical-nav');
+  root.innerHTML = VERTICALS.map((v,i)=>`
+    <button class="nav-btn ${v.key==='partnership-sales'?'active':''}" data-key="${v.key}" style="animation:fadeUp .4s ease ${i*40}ms both;">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${v.icon}"/></svg>
+      </span>
+      <span class="flex-1">${v.name}</span>
+    </button>`).join('');
+  root.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (key === 'partnership-sales') return;
+      // Other verticals not built yet — bounce back to landing where the toast is set up
+      window.location.href = 'index.html#' + key;
+    });
+  });
+}
+
+/* Initial cache so the page renders before Supabase responds. */
+function ensureCacheKeys() {
+  if (!localStorage.getItem(CACHE.PARTNERS))        set(CACHE.PARTNERS, []);
+  if (!localStorage.getItem(CACHE.PARTNER_TASKS))   set(CACHE.PARTNER_TASKS, []);
+  if (!localStorage.getItem(CACHE.PARTNER_EMAILS))  set(CACHE.PARTNER_EMAILS, []);
+  if (!localStorage.getItem(CACHE.PARTNER_MOMS))    set(CACHE.PARTNER_MOMS, []);
+}
+function addDays(n){ const d=new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+
+function getActivePartner() {
+  const all = get(CACHE.PARTNERS, []);
+  const id = get(CACHE.ACTIVE_PARTNER, null);
+  return all.find(p => p.id === id) || all[0] || null;
+}
+function setActivePartner(id) { set(CACHE.ACTIVE_PARTNER, id); renderAll(); }
+
+/* ============================================================
+ *  FORMATTERS
+ * ============================================================ */
+const UNIT_LABEL = { thousands:'Thousand', lakhs:'Lakh', crores:'Crore' };
+const UNIT_ABBR  = { thousands:'K', lakhs:'L', crores:'Cr' };
+function fmtMoney(value, unit, withRupee=false) {
+  if (value == null || value === '' || isNaN(value)) return '—';
+  const num = Number(value).toLocaleString('en-IN', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  return `${withRupee?'₹ ':''}${num} <span class="stat-unit">${UNIT_ABBR[unit] || ''}</span>`;
+}
+function yearOf(iso) { return iso ? new Date(iso).getFullYear() : '—'; }
+function initials(name='') {
+  return name.trim().split(/\s+/).slice(0,2).map(w=>w[0]?.toUpperCase()||'').join('') || '—';
+}
+
+/* ============================================================
+ *  TOP "NOW SHOWING" BAR
+ * ============================================================ */
+function renderNowShowing() {
+  const all = get(CACHE.PARTNERS, []);
+  const p = getActivePartner();
+  const bar = document.getElementById('now-showing-bar');
+  if (!p) {
+    bar.innerHTML = `
+      <div class="ns-eyebrow">Now showing</div>
+      <div class="ns-line">No partner yet — click <span class="ns-meta-strong">Add</span> to create your first one.</div>`;
+    return;
+  }
+  bar.innerHTML = `
+    <div class="ns-eyebrow">Now showing</div>
+    <div class="ns-line flex flex-wrap items-center gap-y-2">
+      <select id="partner-switcher" class="ns-name-select" title="Switch partner">
+        ${all.map(x => `<option value="${x.id}" ${x.id===p.id?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}
+      </select>
+      <span class="ns-divider">|</span>
+      <span>Relationship since <span class="ns-meta-strong">${yearOf(p.relationship_since)}</span></span>
+      <span class="ns-divider">|</span>
+      <span>Products: <span class="ns-meta-strong">${(p.products||[]).length ? (p.products||[]).map(escapeHtml).join(', ') : '—'}</span></span>
+    </div>
+    <div class="absolute top-4 right-4 flex gap-2">
+      <button class="btn-ghost" id="edit-partner-btn" style="background:rgba(255,255,255,.10); border-color:rgba(255,255,255,.20); color:#fff;" title="Edit partner">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        Edit
+      </button>
+      <button class="btn-ghost" id="del-partner-btn" style="background:rgba(239,68,68,.18); border-color:rgba(239,68,68,.35); color:#fff;" title="Delete partner">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      </button>
+    </div>`;
+  document.getElementById('partner-switcher').onchange = (e) => setActivePartner(e.target.value);
+  document.getElementById('edit-partner-btn').onclick = () => openPartnerModal(p);
+  document.getElementById('del-partner-btn').onclick  = () => {
+    confirmDelete(`Delete partner "${p.name}" and all its tasks, emails and meetings? This cannot be undone.`, async () => {
+      // ON DELETE CASCADE in Postgres handles tasks/emails/MoMs
+      const { error } = await sb.from('partners').delete().eq('id', p.id);
+      if (error) return toast('Delete failed: ' + error.message, 'danger');
+      const remainingFirst = (get(CACHE.PARTNERS, []).filter(x => x.id !== p.id)[0]) || null;
+      set(CACHE.ACTIVE_PARTNER, remainingFirst?.id || null);
+      await loadFromSupabase();
+      renderAll();
+      toast('Partner deleted');
+    });
+  };
+}
+
+/* ============================================================
+ *  PRIORITIES, STATS, SPOC
+ * ============================================================ */
+function renderPriorities() {
+  const p = getActivePartner();
+  const el = document.getElementById('priorities-list');
+  if (!p || !p.priorities?.length) { el.innerHTML = `<div class="empty">No priorities set.</div>`; return; }
+  const cls = { high:'pri-high', medium:'pri-med', low:'pri-low' };
+  const dot = { high:'h', medium:'m', low:'l' };
+  el.innerHTML = p.priorities.map(pr => `
+    <div class="pri-pill ${cls[pr.level]||'pri-med'}">
+      <span class="pri-dot ${dot[pr.level]||'m'}"></span>
+      <span class="flex-1">${escapeHtml(pr.text)}</span>
+    </div>`).join('');
+}
+
+function renderStatCards() {
+  const p = getActivePartner();
+  const el = document.getElementById('stat-cards');
+  if (!p) { el.innerHTML = `<div class="col-span-5 empty">Add a partner to see metrics.</div>`; return; }
+  const meetings = get(CACHE.PARTNER_MOMS, []).filter(x => x.partner_id===p.id).length;
+  const emails   = get(CACHE.PARTNER_EMAILS, []).filter(x => x.partner_id===p.id).length;
+  const cards = [
+    { title:'Size of Business',   value:fmtMoney(p.size_value, p.size_unit, true) },
+    { title:'Volume of Business', value:fmtMoney(p.volume_value, p.volume_unit, false) },
+    { title:'Meetings Till Date', value:`${meetings}` },
+    { title:'Emails Till Date',   value:`${emails}` },
+    { title:'Captain',            value:`<span class="text-[18px]">${escapeHtml(p.captain || '—')}</span>` },
+  ];
+  el.innerHTML = cards.map(c => `
+    <div class="stat-card">
+      <div class="stat-title">${c.title}</div>
+      <div class="stat-value mt-2">${c.value}</div>
+    </div>`).join('');
+}
+
+function renderSpoc() {
+  const p = getActivePartner();
+  const body = document.getElementById('spoc-body');
+  const av = document.getElementById('spoc-avatar');
+  if (!p) { body.innerHTML = `<div class="empty mt-2">No partner selected.</div>`; av.textContent='—'; return; }
+  av.textContent = initials(p.spoc_name);
+  body.innerHTML = `
+    <div class="font-display font-bold text-eb-ink text-base mt-1">${escapeHtml(p.spoc_name || '—')}</div>
+    <div class="text-[12px] text-eb-muted mb-3">${escapeHtml(p.spoc_designation || '—')}</div>
+    <div class="spoc-row">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+      ${p.spoc_email ? `<a href="mailto:${escapeHtml(p.spoc_email)}" class="hover:text-eb-blue truncate"><span>${escapeHtml(p.spoc_email)}</span></a>` : `<span class="text-eb-muted">—</span>`}
+    </div>
+    <div class="spoc-row">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+      ${p.spoc_phone ? `<a href="tel:${escapeHtml((p.spoc_phone_country||'')+p.spoc_phone)}" class="hover:text-eb-blue"><span>${escapeHtml(p.spoc_phone_country||'')} ${escapeHtml(p.spoc_phone)}</span></a>` : `<span class="text-eb-muted">—</span>`}
+    </div>
+  `;
+}
+
+/* ============================================================
+ *  TASKS (4-column row)
+ * ============================================================ */
+function renderTasks() {
+  const p = getActivePartner();
+  const el = document.getElementById('task-list');
+  if (!p) { el.innerHTML = `<div style="grid-column:1/-1;"><div class="empty m-3">Select a partner to see tasks.</div></div>`; return; }
+  const list = get(CACHE.PARTNER_TASKS, [])
+    .filter(t => t.partner_id === p.id)
+    .sort((a,b)=> (a.end_date||'').localeCompare(b.end_date||''));
+  if (!list.length) { el.innerHTML = `<div style="grid-column:1/-1;"><div class="empty m-3">No to-dos for ${escapeHtml(p.name)}. Tap <b class="mx-1">+</b> to add one.</div></div>`; return; }
+  el.innerHTML = list.map(t => `
+    <div class="task-cell font-medium cursor-pointer hover:bg-eb-paper2" data-task="${t.id}">${escapeHtml(t.title)}${t.subtasks?.length?` <span class="text-[11px] text-eb-muted">(${t.subtasks.filter(s=>s.done).length}/${t.subtasks.length})</span>`:''}</div>
+    <div class="task-cell text-eb-muted">${t.start_date ? new Date(t.start_date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : '—'}</div>
+    <div class="task-cell text-eb-muted">${t.end_date   ? new Date(t.end_date  ).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : '—'}</div>
+    <div class="task-cell">${escapeHtml(t.assignee || '—')}</div>
+  `).join('');
+  el.querySelectorAll('[data-task]').forEach(c => c.onclick = () => openTaskDetail(c.dataset.task));
+}
+
+/* ============================================================
+ *  EMAILS / MoMs lists
+ * ============================================================ */
+function renderEmails() {
+  const p = getActivePartner();
+  const el = document.getElementById('email-list');
+  if (!p) { el.innerHTML = `<div class="empty m-2">—</div>`; return; }
+  const list = get(CACHE.PARTNER_EMAILS, [])
+    .filter(x => x.partner_id===p.id)
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  if (!list.length) { el.innerHTML = `<div class="empty m-2">No emails logged yet.</div>`; return; }
+  el.innerHTML = list.map(e => `
+    <div>
+      <div class="comm-row" data-toggle="${e.id}">
+        <div class="text-[11px] text-eb-muted">${e.date ? new Date(e.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : '—'}</div>
+        <div class="text-[13px] font-medium text-eb-ink truncate">${escapeHtml(e.subject || '(no subject)')}</div>
+      </div>
+      <div class="comm-detail hidden" id="email-d-${e.id}">
+        <div class="text-[11px] text-eb-muted mb-1">From: ${escapeHtml(e.from_||'—')} · To: ${escapeHtml(e.to_||'—')}</div>
+        <div class="whitespace-pre-wrap">${escapeHtml(e.body||'')}</div>
+        <div class="mt-2 flex justify-end gap-2">
+          <button class="btn-ghost" data-del-email="${e.id}" style="font-size:11px; padding:4px 8px;">Delete</button>
+        </div>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('[data-toggle]').forEach(r => r.onclick = () => {
+    const d = document.getElementById('email-d-' + r.dataset.toggle);
+    d.classList.toggle('hidden');
+  });
+  el.querySelectorAll('[data-del-email]').forEach(b => b.onclick = (ev) => {
+    ev.stopPropagation();
+    confirmDelete('Delete this email log entry?', async () => {
+      const { error } = await sb.from('partner_emails').delete().eq('id', b.dataset.delEmail);
+      if (error) return toast('Delete failed: ' + error.message, 'danger');
+      await loadFromSupabase();
+      renderEmails(); renderStatCards(); toast('Email deleted');
+    });
+  });
+}
+
+function renderMoMs() {
+  const p = getActivePartner();
+  const el = document.getElementById('mom-list');
+  if (!p) { el.innerHTML = `<div class="empty m-2">—</div>`; return; }
+  const list = get(CACHE.PARTNER_MOMS, [])
+    .filter(x => x.partner_id===p.id)
+    .sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+  if (!list.length) { el.innerHTML = `<div class="empty m-2">No MoMs logged yet.</div>`; return; }
+  el.innerHTML = list.map(m => `
+    <div>
+      <div class="comm-row" data-toggle="${m.id}">
+        <div class="text-[11px] text-eb-muted">${m.date ? new Date(m.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'2-digit'}) : '—'}</div>
+        <div class="text-[13px] font-medium text-eb-ink truncate">${escapeHtml(m.heading || '(untitled)')}</div>
+      </div>
+      <div class="comm-detail hidden" id="mom-d-${m.id}">
+        <div class="text-[11px] text-eb-muted mb-1">Attendees: ${escapeHtml(m.attendees||'—')}</div>
+        ${m.agenda ? `<div class="mb-1"><b>Agenda:</b> ${escapeHtml(m.agenda)}</div>` : ''}
+        ${m.notes  ? `<div class="mb-1 whitespace-pre-wrap"><b>Notes:</b> ${escapeHtml(m.notes)}</div>` : ''}
+        ${m.action_items ? `<div class="mb-1 whitespace-pre-wrap"><b>Action items:</b> ${escapeHtml(m.action_items)}</div>` : ''}
+        <div class="mt-2 flex justify-end gap-2">
+          <button class="btn-ghost" data-del-mom="${m.id}" style="font-size:11px; padding:4px 8px;">Delete</button>
+        </div>
+      </div>
+    </div>`).join('');
+  el.querySelectorAll('[data-toggle]').forEach(r => r.onclick = () => {
+    const d = document.getElementById('mom-d-' + r.dataset.toggle);
+    d.classList.toggle('hidden');
+  });
+  el.querySelectorAll('[data-del-mom]').forEach(b => b.onclick = (ev) => {
+    ev.stopPropagation();
+    confirmDelete('Delete this meeting log entry?', async () => {
+      const { error } = await sb.from('partner_moms').delete().eq('id', b.dataset.delMom);
+      if (error) return toast('Delete failed: ' + error.message, 'danger');
+      await loadFromSupabase();
+      renderMoMs(); renderStatCards(); toast('MoM deleted');
+    });
+  });
+}
+
+/* ============================================================
+ *  ADD / EDIT PARTNER MODAL
+ * ============================================================ */
+const COUNTRY_CODES = [
+  { c:'+91',  n:'India'    },
+  { c:'+1',   n:'US/Canada'},
+  { c:'+44',  n:'UK'       },
+  { c:'+971', n:'UAE'      },
+  { c:'+65',  n:'Singapore'},
+  { c:'+49',  n:'Germany'  },
+  { c:'+33',  n:'France'   },
+  { c:'+81',  n:'Japan'    },
+  { c:'+86',  n:'China'    },
+  { c:'+61',  n:'Australia'},
+];
+
+function openPartnerModal(existing=null) {
+  const p = existing || {
+    products: [], priorities: [],
+    size_unit:'crores', volume_unit:'thousands',
+    spoc_phone_country:'+91',
+  };
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">${existing?'Edit':'Add'} Partner</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Profile, priorities, and SPOC details. All fields apply to this partner only.</p>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="lbl">Name of Partner</label>
+          <input id="p-name" class="input" pattern="[A-Za-z &\\.\\-]+" placeholder="e.g. Bosch India" value="${escapeHtml(p.name||'')}" />
+          <p class="text-[11px] text-eb-muted mt-1">Letters, spaces, &amp; . - only.</p>
+        </div>
+        <div>
+          <label class="lbl">Relationship since</label>
+          <input id="p-since" type="date" class="input" value="${escapeHtml(p.relationship_since||'')}" />
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Products worked on</label>
+        <div id="p-products"></div>
+        <button class="btn-ghost mt-1" id="p-add-product"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Add product</button>
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Priorities</label>
+        <p class="text-[11px] text-eb-muted mb-2">Pick a level — High = green, Medium = orange, Low = yellow.</p>
+        <div id="p-priorities"></div>
+        <button class="btn-ghost mt-1" id="p-add-priority"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Add priority</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div>
+          <label class="lbl">Size of Business (₹)</label>
+          <div class="flex gap-2">
+            <select id="p-size-unit" class="input" style="max-width:140px;">
+              <option value="thousands" ${p.size_unit==='thousands'?'selected':''}>Thousands</option>
+              <option value="lakhs"     ${p.size_unit==='lakhs'?'selected':''}>Lakhs</option>
+              <option value="crores"    ${p.size_unit==='crores'?'selected':''}>Crores</option>
+            </select>
+            <input id="p-size-val" class="input" type="number" step="0.01" min="0" placeholder="0.00" value="${p.size_value??''}" />
+          </div>
+        </div>
+        <div>
+          <label class="lbl">Volume of Business</label>
+          <div class="flex gap-2">
+            <select id="p-vol-unit" class="input" style="max-width:140px;">
+              <option value="thousands" ${p.volume_unit==='thousands'?'selected':''}>Thousands</option>
+              <option value="lakhs"     ${p.volume_unit==='lakhs'?'selected':''}>Lakhs</option>
+            </select>
+            <input id="p-vol-val" class="input" type="number" step="0.01" min="0" placeholder="0.00" value="${p.volume_value??''}" />
+          </div>
+        </div>
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Captain Name</label>
+        <input id="p-captain" class="input" pattern="[A-Za-z \\.\\-]+" placeholder="e.g. Saurav" value="${escapeHtml(p.captain||'')}" />
+      </div>
+
+      <div class="border-t border-eb-line mt-5 pt-4">
+        <div class="font-display font-semibold text-eb-ink mb-3">SPOC contact details</div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="lbl">Name</label>
+            <input id="p-spoc-name" class="input" pattern="[A-Za-z \\.\\-]+" placeholder="e.g. Anil Kapoor" value="${escapeHtml(p.spoc_name||'')}" />
+          </div>
+          <div>
+            <label class="lbl">Designation</label>
+            <input id="p-spoc-desig" class="input" pattern="[A-Za-z &\\.\\-/]+" placeholder="e.g. Head of Sourcing" value="${escapeHtml(p.spoc_designation||'')}" />
+          </div>
+          <div>
+            <label class="lbl">Email ID</label>
+            <input id="p-spoc-email" class="input" type="email" placeholder="name@company.com" value="${escapeHtml(p.spoc_email||'')}" />
+          </div>
+          <div>
+            <label class="lbl">Phone</label>
+            <div class="flex gap-2">
+              <select id="p-spoc-cc" class="input" style="max-width:120px;">
+                ${COUNTRY_CODES.map(cc => `<option value="${cc.c}" ${p.spoc_phone_country===cc.c?'selected':''}>${cc.c} ${cc.n}</option>`).join('')}
+              </select>
+              <input id="p-spoc-phone" class="input" inputmode="numeric" pattern="[0-9]+" placeholder="9876543210" value="${escapeHtml(p.spoc_phone||'')}" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="p-save">${existing?'Save changes':'Create partner'}</button>
+      </div>
+    </div>
+  `, 'lg');
+
+  // products
+  const prodHost = document.getElementById('p-products');
+  const renderProducts = (arr) => {
+    prodHost.innerHTML = (arr.length?arr:['']).map((v,i)=>`
+      <div class="multi-row">
+        <input class="input p-prod-input" placeholder="e.g. ECU firmware" value="${escapeHtml(v)}" />
+        <button class="chip-rm" data-rm-prod="${i}" title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>`).join('');
+    prodHost.querySelectorAll('[data-rm-prod]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.rmProd;
+      const cur = collectProducts(); cur.splice(idx,1); renderProducts(cur);
+    });
+  };
+  const collectProducts = () => [...prodHost.querySelectorAll('.p-prod-input')].map(i => i.value.trim()).filter(Boolean);
+  renderProducts(p.products && p.products.length ? p.products.slice() : ['']);
+  document.getElementById('p-add-product').onclick = () => { const cur = collectProducts(); cur.push(''); renderProducts(cur); };
+
+  // priorities
+  const priHost = document.getElementById('p-priorities');
+  const renderPri = (arr) => {
+    priHost.innerHTML = (arr.length?arr:[{text:'',level:'medium'}]).map((v,i)=>`
+      <div class="multi-row p-pri-row" data-idx="${i}">
+        <input class="input p-pri-input" placeholder="Priority text" value="${escapeHtml(v.text||'')}" />
+        <button class="lvl-btn h ${v.level==='high'?'active':''}"   data-lvl="high"   data-idx="${i}">High</button>
+        <button class="lvl-btn m ${v.level==='medium'?'active':''}" data-lvl="medium" data-idx="${i}">Med</button>
+        <button class="lvl-btn l ${v.level==='low'?'active':''}"    data-lvl="low"    data-idx="${i}">Low</button>
+        <button class="chip-rm" data-rm-pri="${i}" title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>`).join('');
+    priHost.querySelectorAll('[data-rm-pri]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.rmPri; const cur = collectPriorities(); cur.splice(idx,1); renderPri(cur);
+    });
+    priHost.querySelectorAll('[data-lvl]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.idx; const cur = collectPriorities(); cur[idx].level = b.dataset.lvl; renderPri(cur);
+    });
+  };
+  const collectPriorities = () => [...priHost.querySelectorAll('.p-pri-row')].map(row => ({
+    text: row.querySelector('.p-pri-input').value.trim(),
+    level: (row.querySelector('.lvl-btn.active')?.dataset.lvl) || 'medium',
+  }));
+  renderPri(p.priorities && p.priorities.length ? p.priorities.slice() : [{text:'',level:'medium'}]);
+  document.getElementById('p-add-priority').onclick = () => { const cur = collectPriorities(); cur.push({text:'',level:'medium'}); renderPri(cur); };
+
+  // save
+  document.getElementById('p-save').onclick = async () => {
+    const name  = document.getElementById('p-name').value.trim();
+    if (!name || !/^[A-Za-z &\.\-]+$/.test(name)) return toast('Partner name is required (letters, spaces, & . - only)', 'warn');
+    const since = document.getElementById('p-since').value;
+    if (!since) return toast('Relationship-since date is required', 'warn');
+
+    const captain = document.getElementById('p-captain').value.trim();
+    if (captain && !/^[A-Za-z \.\-]+$/.test(captain)) return toast('Captain name must be alphabetical', 'warn');
+
+    const spocName = document.getElementById('p-spoc-name').value.trim();
+    if (spocName && !/^[A-Za-z \.\-]+$/.test(spocName)) return toast('SPOC name must be alphabetical', 'warn');
+
+    const spocEmail = document.getElementById('p-spoc-email').value.trim();
+    if (spocEmail && !/^\S+@\S+\.\S+$/.test(spocEmail)) return toast('SPOC email is not valid', 'warn');
+
+    const spocPhone = document.getElementById('p-spoc-phone').value.trim();
+    if (spocPhone && !/^[0-9]+$/.test(spocPhone)) return toast('SPOC phone must be numeric only', 'warn');
+
+    const sizeVal = document.getElementById('p-size-val').value;
+    const volVal  = document.getElementById('p-vol-val').value;
+
+    const partial = {
+      name,
+      relationship_since: since,
+      products: collectProducts(),
+      priorities: collectPriorities().filter(x => x.text),
+      size_unit:   document.getElementById('p-size-unit').value,
+      size_value:  sizeVal === '' ? null : Number(Number(sizeVal).toFixed(2)),
+      volume_unit: document.getElementById('p-vol-unit').value,
+      volume_value:volVal  === '' ? null : Number(Number(volVal).toFixed(2)),
+      captain,
+      spoc_name: spocName,
+      spoc_designation: document.getElementById('p-spoc-desig').value.trim(),
+      spoc_email: spocEmail,
+      spoc_phone_country: document.getElementById('p-spoc-cc').value,
+      spoc_phone: spocPhone,
+    };
+    const dbPayload = toDbPartner(partial);
+    let saved, error;
+    if (existing) {
+      ({ data: saved, error } = await sb.from('partners').update(dbPayload).eq('id', existing.id).select().single());
+    } else {
+      ({ data: saved, error } = await sb.from('partners').insert(dbPayload).select().single());
+    }
+    if (error) return toast('Save failed: ' + error.message, 'danger');
+    if (!existing && saved) set(CACHE.ACTIVE_PARTNER, saved.id);
+    await loadFromSupabase();
+    closeModal(); renderAll();
+    toast(existing ? 'Partner updated' : 'Partner created');
+  };
+}
+
+/* ============================================================
+ *  ADD / EDIT TASK MODAL
+ * ============================================================ */
+function openTaskModal(existing=null) {
+  const p = getActivePartner();
+  if (!p) return toast('Add a partner first', 'warn');
+  const t = existing || { subtasks:[], start_date:todayISO(), end_date:'' };
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">${existing?'Edit':'New'} To-Do</h3>
+      <p class="text-eb-muted text-[13px] mb-5">For partner <b class="text-eb-ink">${escapeHtml(p.name)}</b>.</p>
+
+      <div><label class="lbl">Title</label><input id="t-title" class="input" placeholder="e.g. Send revised proposal" value="${escapeHtml(t.title||'')}" /></div>
+
+      <div class="mt-4">
+        <label class="lbl">Sub-tasks (checklist)</label>
+        <div id="t-subs"></div>
+        <button class="btn-ghost mt-1" id="t-add-sub"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Add sub-task</button>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4 mt-4">
+        <div><label class="lbl">Start date</label><input id="t-start" type="date" class="input" value="${escapeHtml(t.start_date||'')}" /></div>
+        <div><label class="lbl">End date (due)</label><input id="t-end" type="date" class="input" value="${escapeHtml(t.end_date||'')}" /></div>
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Assignee</label>
+        <input id="t-assignee" class="input" placeholder="e.g. Saurav" value="${escapeHtml(t.assignee||'')}" />
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Description</label>
+        <textarea id="t-desc" class="input" rows="3" placeholder="Notes / context...">${escapeHtml(t.description||'')}</textarea>
+      </div>
+
+      <div class="mt-4">
+        <label class="lbl">Attachment</label>
+        <input id="t-file" type="file" class="input" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" />
+        ${t.attachment_name ? `<p class="text-[11px] text-eb-muted mt-1">Currently attached: <b>${escapeHtml(t.attachment_name)}</b> (uploading a new file replaces it)</p>` : `<p class="text-[11px] text-eb-muted mt-1">PDF, Word, Excel, PowerPoint up to ~1 MB.</p>`}
+      </div>
+
+      <div class="flex justify-between gap-2 mt-6">
+        ${existing ? `<button class="btn-ghost" id="t-delete" style="color:#EF4444; border-color:rgba(239,68,68,.30);">Delete task</button>` : `<span></span>`}
+        <div class="flex gap-2">
+          <button class="btn-ghost" data-close>Cancel</button>
+          <button class="btn-primary" id="t-save">${existing?'Save':'Create'}</button>
+        </div>
+      </div>
+    </div>
+  `, 'lg');
+
+  const subsHost = document.getElementById('t-subs');
+  const renderSubs = (arr) => {
+    subsHost.innerHTML = (arr.length?arr:[{text:'',done:false}]).map((s,i)=>`
+      <div class="multi-row">
+        <input type="checkbox" ${s.done?'checked':''} class="t-sub-done" data-idx="${i}" />
+        <input class="input t-sub-input" placeholder="Sub-task" value="${escapeHtml(s.text||'')}" />
+        <button class="chip-rm" data-rm-sub="${i}" title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>`).join('');
+    subsHost.querySelectorAll('[data-rm-sub]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.rmSub; const cur = collectSubs(); cur.splice(idx,1); renderSubs(cur);
+    });
+  };
+  const collectSubs = () => [...subsHost.querySelectorAll('.multi-row')].map(row => ({
+    text: row.querySelector('.t-sub-input').value.trim(),
+    done: row.querySelector('.t-sub-done').checked,
+  }));
+  renderSubs(t.subtasks && t.subtasks.length ? t.subtasks.slice() : []);
+  document.getElementById('t-add-sub').onclick = () => { const cur = collectSubs(); cur.push({text:'',done:false}); renderSubs(cur); };
+
+  if (existing) {
+    document.getElementById('t-delete').onclick = () => {
+      confirmDelete(`Delete task "${existing.title}"?`, async () => {
+        const { error } = await sb.from('partner_tasks').delete().eq('id', existing.id);
+        if (error) return toast('Delete failed: ' + error.message, 'danger');
+        await loadFromSupabase();
+        closeModal(); renderTasks(); toast('Task deleted');
+      });
+    };
+  }
+
+  document.getElementById('t-save').onclick = async () => {
+    const title = document.getElementById('t-title').value.trim();
+    if (!title) return toast('Title is required', 'warn');
+    const start_date = document.getElementById('t-start').value;
+    const end_date   = document.getElementById('t-end').value;
+    if (start_date && end_date && start_date > end_date) return toast('Start date must be on/before End date', 'warn');
+
+    const fileEl = document.getElementById('t-file');
+    let attachment_name = t.attachment_name || '';
+    let attachment_path = t.attachment_path || '';
+    if (fileEl.files && fileEl.files[0]) {
+      const f = fileEl.files[0];
+      if (f.size > 10 * 1024 * 1024) return toast('Attachment exceeds 10 MB — please link via description', 'warn');
+      const up = await uploadAttachment(f);
+      attachment_name = up.name;
+      attachment_path = up.path;
+    }
+
+    const dbPayload = {
+      partner_id: p.id,
+      title,
+      subtasks: collectSubs().filter(s => s.text),
+      start_date: start_date || null,
+      end_date: end_date || null,
+      assignee: document.getElementById('t-assignee').value.trim() || null,
+      description: document.getElementById('t-desc').value.trim() || null,
+      attachment_name: attachment_name || null,
+      attachment_path: attachment_path || null,
+    };
+    let error;
+    if (existing) {
+      ({ error } = await sb.from('partner_tasks').update(dbPayload).eq('id', existing.id));
+    } else {
+      ({ error } = await sb.from('partner_tasks').insert(dbPayload));
+    }
+    if (error) return toast('Save failed: ' + error.message, 'danger');
+    await loadFromSupabase();
+    closeModal(); renderTasks();
+    toast(existing ? 'Task updated' : 'Task added');
+  };
+}
+
+function openTaskDetail(taskId) {
+  const t = get(CACHE.PARTNER_TASKS, []).find(x => x.id === taskId);
+  if (!t) return;
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-start justify-between gap-3 mb-1">
+        <h3 class="font-display font-bold text-xl text-eb-ink">${escapeHtml(t.title)}</h3>
+        <button class="btn-ghost" id="td-edit"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> Edit</button>
+      </div>
+      <div class="text-[13px] text-eb-muted mb-4">
+        ${t.start_date ? `Start <b class="text-eb-ink">${new Date(t.start_date).toLocaleDateString('en-IN')}</b>` : ''}
+        ${t.end_date   ? ` · End <b class="text-eb-ink">${new Date(t.end_date  ).toLocaleDateString('en-IN')}</b>` : ''}
+        ${t.assignee   ? ` · Assigned to <b class="text-eb-ink">${escapeHtml(t.assignee)}</b>` : ''}
+      </div>
+
+      ${t.subtasks?.length ? `
+        <div class="lbl">Sub-tasks</div>
+        <ul class="space-y-1 mb-4">
+          ${t.subtasks.map(s => `<li class="flex items-center gap-2 text-[14px]"><span class="w-4 h-4 rounded border ${s.done?'bg-eb-blue border-eb-blue':'border-eb-line'}"></span>${escapeHtml(s.text)}</li>`).join('')}
+        </ul>` : ''}
+
+      ${t.description ? `<div class="lbl">Description</div><div class="text-[14px] whitespace-pre-wrap mb-4">${escapeHtml(t.description)}</div>` : ''}
+
+      ${t.attachment_name ? `<div class="lbl">Attachment</div><a href="${attachmentUrl(t.attachment_path)}" target="_blank" class="text-eb-blue hover:underline text-[14px]">📎 ${escapeHtml(t.attachment_name)}</a>` : ''}
+
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Close</button>
+      </div>
+    </div>`, 'lg');
+  document.getElementById('td-edit').onclick = () => { closeModal(); openTaskModal(t); };
+}
+
+/* ============================================================
+ *  ADD EMAIL / MoM MODALS
+ * ============================================================ */
+function openEmailModal() {
+  const p = getActivePartner();
+  if (!p) return toast('Add a partner first', 'warn');
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Log email</h3>
+      <p class="text-eb-muted text-[13px] mb-5">For <b class="text-eb-ink">${escapeHtml(p.name)}</b>.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="lbl">Date</label><input id="e-date" type="date" class="input" value="${todayISO()}" /></div>
+        <div><label class="lbl">From</label><input id="e-from" class="input" placeholder="sender@..." /></div>
+        <div class="col-span-2"><label class="lbl">To</label><input id="e-to" class="input" placeholder="recipient@..." /></div>
+        <div class="col-span-2"><label class="lbl">Subject</label><input id="e-subject" class="input" placeholder="Subject of the email" /></div>
+        <div class="col-span-2"><label class="lbl">Body</label><textarea id="e-body" class="input" rows="5" placeholder="Paste the email body / summary"></textarea></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="e-save">Save</button>
+      </div>
+    </div>`, 'lg');
+  document.getElementById('e-save').onclick = async () => {
+    const subject = document.getElementById('e-subject').value.trim();
+    if (!subject) return toast('Subject is required', 'warn');
+    const { error } = await sb.from('partner_emails').insert({
+      partner_id: p.id,
+      date: document.getElementById('e-date').value || null,
+      from_addr: document.getElementById('e-from').value.trim() || null,
+      to_addr:   document.getElementById('e-to').value.trim()   || null,
+      subject,
+      body: document.getElementById('e-body').value.trim() || null,
+    });
+    if (error) return toast('Save failed: ' + error.message, 'danger');
+    await loadFromSupabase();
+    closeModal(); renderEmails(); renderStatCards();
+    toast('Email logged');
+  };
+}
+
+function openMoMModal() {
+  const p = getActivePartner();
+  if (!p) return toast('Add a partner first', 'warn');
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Log meeting (MoM)</h3>
+      <p class="text-eb-muted text-[13px] mb-5">For <b class="text-eb-ink">${escapeHtml(p.name)}</b>.</p>
+      <div class="grid grid-cols-2 gap-4">
+        <div><label class="lbl">Date</label><input id="m-date" type="date" class="input" value="${todayISO()}" /></div>
+        <div><label class="lbl">Heading</label><input id="m-heading" class="input" placeholder="e.g. Kickoff meeting" /></div>
+        <div class="col-span-2"><label class="lbl">Attendees</label><input id="m-attendees" class="input" placeholder="Comma-separated names" /></div>
+        <div class="col-span-2"><label class="lbl">Agenda</label><input id="m-agenda" class="input" placeholder="What was the meeting about?" /></div>
+        <div class="col-span-2"><label class="lbl">Notes</label><textarea id="m-notes" class="input" rows="4" placeholder="Discussion notes"></textarea></div>
+        <div class="col-span-2"><label class="lbl">Action items</label><textarea id="m-actions" class="input" rows="3" placeholder="Who does what by when"></textarea></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="m-save">Save</button>
+      </div>
+    </div>`, 'lg');
+  document.getElementById('m-save').onclick = async () => {
+    const heading = document.getElementById('m-heading').value.trim();
+    if (!heading) return toast('Heading is required', 'warn');
+    const { error } = await sb.from('partner_moms').insert({
+      partner_id: p.id,
+      date: document.getElementById('m-date').value || null,
+      heading,
+      attendees:    document.getElementById('m-attendees').value.trim() || null,
+      agenda:       document.getElementById('m-agenda').value.trim()    || null,
+      notes:        document.getElementById('m-notes').value.trim()     || null,
+      action_items: document.getElementById('m-actions').value.trim()   || null,
+    });
+    if (error) return toast('Save failed: ' + error.message, 'danger');
+    await loadFromSupabase();
+    closeModal(); renderMoMs(); renderStatCards();
+    toast('Meeting logged');
+  };
+}
+
+/* ============================================================
+ *  MODAL helpers
+ * ============================================================ */
+function showModal(innerHTML, size='') {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-back"><div class="modal-card ${size}">${innerHTML}</div></div>`;
+  root.querySelector('.modal-back').addEventListener('click', e => { if (e.target.classList.contains('modal-back')) closeModal(); });
+  root.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+}
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+function confirmDelete(message, onConfirm) {
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-start gap-3 mb-3">
+        <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style="background:rgba(239,68,68,.12); color:#EF4444;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <h3 class="font-display font-bold text-xl text-eb-ink leading-tight">Confirm deletion</h3>
+          <p class="text-eb-muted text-[13px] mt-1">${escapeHtml(message)}</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="confirm-delete-btn" style="background:#EF4444;">Confirm</button>
+      </div>
+    </div>`);
+  const btn = document.getElementById('confirm-delete-btn');
+  btn.onmouseenter = () => { btn.style.background = '#DC2626'; };
+  btn.onmouseleave = () => { btn.style.background = '#EF4444'; };
+  btn.onclick = () => { closeModal(); onConfirm(); };
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+/* ============================================================
+ *  EVENT WIRING + INIT
+ * ============================================================ */
+function renderAll() {
+  renderNowShowing();
+  renderPriorities();
+  renderStatCards();
+  renderSpoc();
+  renderTasks();
+  renderEmails();
+  renderMoMs();
+}
+
+document.getElementById('add-partner-btn').onclick = () => openPartnerModal();
+document.getElementById('add-task-btn').onclick    = () => openTaskModal();
+document.getElementById('add-email-btn').onclick   = () => openEmailModal();
+document.getElementById('add-mom-btn').onclick     = () => openMoMModal();
+
+(async function init() {
+  ensureCacheKeys();
+  renderVerticalNav();
+  renderAll();             // first paint from cache (empty on first load)
+  if (!sb) {
+    toast('Supabase client failed to load — check network', 'danger');
+    return;
+  }
+  await loadFromSupabase();
+  renderAll();             // re-paint with live data
+})();
+
+/* ============================================================
+ *  SUPABASE INTEGRATION — placeholder
+ *  ----------------------------------------------------------
+ *  All shapes above (partners, partner_tasks, partner_emails,
+ *  partner_moms) map 1:1 to Supabase tables. To wire it up I
+ *  need: SUPABASE_URL, SUPABASE_ANON_KEY, and (optionally) a
+ *  Storage bucket name for task attachments. The schema SQL
+ *  is in /supabase/schema.sql — run it once in the SQL editor.
+ * ============================================================ */
+</script>
+</body>
+</html>
