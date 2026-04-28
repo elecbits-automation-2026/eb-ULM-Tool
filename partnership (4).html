@@ -1,0 +1,1526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Partnership &amp; Sales — Command Center</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- Supabase (loaded but only used when configured — see CONFIG block in JS) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          eb: {
+            ink:'#0A1628', ink2:'#142540',
+            blue:'#1E6BFF', blueHi:'#4A8BFF', blueLo:'#0E4FCC', cyan:'#00C2FF',
+            paper:'#F7F9FC', paper2:'#EEF2F8', line:'#E2E8F2',
+            muted:'#5A6B85',
+            ok:'#10B981', warn:'#F59E0B', danger:'#EF4444',
+            // Priority colors per spec: high=green, medium=orange, low=yellow
+            priHigh:'#10B981', priMed:'#F97316', priLow:'#FACC15',
+          }
+        },
+        fontFamily: { sans:['Inter','system-ui','sans-serif'], display:['"Space Grotesk"','Inter','sans-serif'] },
+        boxShadow: {
+          card:'0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05)',
+          cardH:'0 2px 4px rgba(10,22,40,.06), 0 12px 28px rgba(10,22,40,.10)',
+        }
+      }
+    }
+  };
+</script>
+
+<style>
+  html, body { background: #F7F9FC; }
+  body { font-family: 'Inter', system-ui, sans-serif; color: #0A1628; }
+  .font-display { font-family: 'Space Grotesk', Inter, sans-serif; letter-spacing: -.01em; }
+
+  body::before {
+    content:''; position:fixed; inset:0; pointer-events:none; z-index:0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(10,22,40,.05) 1px, transparent 0);
+    background-size: 24px 24px; opacity:.5;
+  }
+  #app { position: relative; z-index: 1; }
+
+  /* Collapsible sidebar — width controlled by data-sidebar attribute on body
+     so the layout reflows automatically. Smooth transition on width. */
+  .cc-sidebar { width: 22rem; transition: width .25s ease; flex-shrink:0; position:relative; }
+  body[data-sidebar="collapsed"] .cc-sidebar { width: 4.5rem; }
+  body[data-sidebar="collapsed"] .cc-sidebar .label-when-open { display:none; }
+  body[data-sidebar="collapsed"] .cc-sidebar .nav-btn { justify-content:center; padding:14px 0; gap:0; }
+  body[data-sidebar="collapsed"] .cc-sidebar .brand-text { display:none; }
+  body[data-sidebar="collapsed"] .cc-sidebar .brand-block { justify-content:center; }
+  body[data-sidebar="collapsed"] .cc-sidebar nav { padding-left:0; padding-right:0; }
+  body[data-sidebar="collapsed"] .cc-sidebar .nav-section-title { display:none; }
+  body[data-sidebar="collapsed"] .cc-sidebar .footer-row { flex-direction:column; gap:8px; padding-left:8px; padding-right:8px; }
+  body[data-sidebar="collapsed"] .cc-sidebar .footer-status-text { display:none; }
+
+  /* Sidebar collapse toggle button — sits on the seam, always visible */
+  .sidebar-toggle {
+    position:absolute; top:28px; right:-14px; z-index:5;
+    width:28px; height:28px; border-radius:50%;
+    background: linear-gradient(135deg, #1E6BFF, #00C2FF);
+    border:2px solid #fff;
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; box-shadow:0 4px 14px rgba(30,107,255,.45);
+    color:#fff; transition:all .18s ease;
+  }
+  .sidebar-toggle:hover { transform:scale(1.12); box-shadow:0 6px 18px rgba(30,107,255,.6); }
+  .sidebar-toggle svg { transition:transform .25s ease; }
+  body[data-sidebar="collapsed"] .sidebar-toggle svg { transform: rotate(180deg); }
+
+  /* Tooltip for collapsed nav buttons */
+  body[data-sidebar="collapsed"] .nav-btn { position:relative; }
+  body[data-sidebar="collapsed"] .nav-btn:hover::after {
+    content: attr(data-tip); position:absolute; left: calc(100% + 12px); top:50%; transform:translateY(-50%);
+    background:#0A1628; color:#fff; padding:6px 10px; border-radius:6px; font-size:12px; white-space:nowrap;
+    box-shadow:0 4px 12px rgba(0,0,0,.2); z-index:50; pointer-events:none;
+    border:1px solid rgba(255,255,255,.08);
+  }
+  body[data-sidebar="collapsed"] .nav-btn:hover::before { transform:scaleY(1); }
+
+  /* Sidebar */
+  .nav-btn { position:relative; display:flex; align-items:center; gap:12px; padding:14px 16px; border-radius:10px;
+    background:transparent; color:#CBD5E1; transition:all .18s ease; cursor:pointer; border:1px solid transparent;
+    font-weight:500; font-size:14px; width:100%; text-align:left; }
+  .nav-btn:hover { background: rgba(30,107,255,.10); color:#fff; border-color:rgba(30,107,255,.25); }
+  .nav-btn.active { background: rgba(30,107,255,.16); color:#fff; border-color:rgba(30,107,255,.4); }
+  .nav-btn:hover .nav-icon, .nav-btn.active .nav-icon { color:#4A8BFF; }
+  .nav-btn::before { content:''; position:absolute; left:0; top:25%; bottom:25%; width:3px;
+    background:#1E6BFF; border-radius:0 2px 2px 0; transform:scaleY(0); transition:transform .18s ease; }
+  .nav-btn:hover::before, .nav-btn.active::before { transform:scaleY(1); }
+  .nav-icon { color:#64748B; transition:color .18s ease; flex-shrink:0; }
+
+  .panel { background:#fff; border:1px solid #E2E8F2; border-radius:14px;
+    box-shadow:0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05); }
+
+  /* Buttons */
+  .btn-primary { background:#1E6BFF; color:#fff; padding:8px 14px; border-radius:8px;
+    font-weight:500; font-size:13px; transition:all .15s ease; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+  .btn-primary:hover { background:#0E4FCC; transform:translateY(-1px); box-shadow:0 4px 10px rgba(30,107,255,.30); }
+  .btn-ghost { background:transparent; color:#0A1628; padding:6px 12px; border:1px solid #E2E8F2; border-radius:8px;
+    font-weight:500; font-size:13px; transition:all .15s ease; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+  .btn-ghost:hover { border-color:#1E6BFF; color:#1E6BFF; background:rgba(30,107,255,.04); }
+  .btn-icon { width:32px; height:32px; display:inline-flex; align-items:center; justify-content:center;
+    border-radius:8px; border:1px solid #E2E8F2; background:#fff; transition:all .15s ease; cursor:pointer; }
+  .btn-icon:hover { border-color:#1E6BFF; color:#1E6BFF; }
+  .btn-add { width:28px; height:28px; border-radius:8px; background:#1E6BFF; color:#fff;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:all .15s ease; flex-shrink:0; }
+  .btn-add:hover { background:#0E4FCC; transform:scale(1.05); }
+
+  /* Inputs */
+  .input { width:100%; padding:10px 12px; border:1px solid #E2E8F2; border-radius:8px;
+    background:#fff; font-size:14px; color:#0A1628; transition:border-color .15s, box-shadow .15s; }
+  .input:focus { outline:none; border-color:#1E6BFF; box-shadow:0 0 0 3px rgba(30,107,255,.12); }
+  .input.sm { padding:7px 10px; font-size:13px; }
+  label.lbl { display:block; font-size:12px; font-weight:600; color:#5A6B85; margin-bottom:6px;
+    text-transform:uppercase; letter-spacing:.04em; }
+  select.input { background-image:url("data:image/svg+xml;charset=US-ASCII,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%235A6B85' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 10px center; padding-right:30px; appearance:none; }
+
+  /* Now Showing — partner header (the centerpiece) */
+  .now-showing-eyebrow { font-family:'Space Grotesk'; font-size:12px; letter-spacing:.4em;
+    text-transform:uppercase; color:#1E6BFF; font-weight:700; }
+  .now-showing-title { font-family:'Space Grotesk'; font-size:42px; font-weight:700;
+    color:#0A1628; line-height:1.1; letter-spacing:-.02em; }
+  .partner-select-trigger { display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
+    background:#fff; border:1px solid #E2E8F2; border-radius:999px;
+    font-family:'Inter'; font-size:14px; font-weight:500; color:#0A1628; cursor:pointer;
+    transition:all .15s ease; box-shadow:0 1px 2px rgba(10,22,40,.04); }
+  .partner-select-trigger:hover { border-color:#1E6BFF; color:#1E6BFF; box-shadow:0 4px 12px rgba(30,107,255,.10); }
+  .partner-meta { font-family:'Inter'; font-size:14px; color:#5A6B85; font-weight:400; }
+  .partner-meta b { color:#0A1628; font-weight:600; }
+
+  /* Priority list — neutral, all equal weight */
+  .pri-item { display:flex; align-items:flex-start; gap:8px; padding:8px 10px; border-radius:8px;
+    font-size:13px; line-height:1.4; color:#0A1628; background:#F7F9FC; border:1px solid #EEF2F8;
+    transition: background .12s ease; }
+  .pri-item:hover { background:#EEF2F8; }
+  .pri-item .pri-bullet { width:6px; height:6px; border-radius:50%; background:#1E6BFF; flex-shrink:0; margin-top:6px; }
+  .pri-item .pri-text { flex:1; min-width:0; word-break:break-word; }
+  .pri-item .pri-rm { color:#5A6B85; opacity:0; transition: opacity .12s ease; cursor:pointer; flex-shrink:0; }
+  .pri-item:hover .pri-rm { opacity:1; }
+  .pri-item .pri-rm:hover { color:#EF4444; }
+
+  /* KPI cards — fixed width-aware, never overflows */
+  .kpi { background:#fff; border:1px solid #E2E8F2; border-radius:12px; padding:12px 14px;
+    transition:all .15s ease; min-width:0; overflow:hidden; }
+  .kpi:hover { transform:translateY(-2px); box-shadow:0 8px 20px rgba(10,22,40,.08); }
+  .kpi-label { font-size:10px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; color:#5A6B85;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .kpi-value { font-family:'Space Grotesk'; font-size:20px; font-weight:700; color:#0A1628;
+    margin-top:4px; line-height:1.2; letter-spacing:-.01em;
+    overflow:hidden; text-overflow:ellipsis; word-break:break-word;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+  .kpi-unit { font-size:11px; font-weight:500; color:#5A6B85; margin-left:3px; text-transform:capitalize;
+    display:inline-block; }
+
+  /* Contact card */
+  .contact-card { background: linear-gradient(135deg, #0A1628 0%, #142540 100%); color:#fff;
+    border-radius:14px; padding:16px 18px; min-width:240px; }
+  .contact-card .label { font-size:10px; letter-spacing:.16em; color:#4A8BFF; font-weight:700;
+    text-transform:uppercase; }
+  .contact-card .name  { font-family:'Space Grotesk'; font-size:18px; font-weight:700; margin-top:6px; }
+  .contact-card .row   { display:flex; align-items:center; gap:8px; font-size:13px;
+    color:rgba(255,255,255,.85); margin-top:6px; }
+  .contact-card .row svg { color:#4A8BFF; flex-shrink:0; }
+  .contact-card a { color:rgba(255,255,255,.85); }
+  .contact-card a:hover { color:#fff; text-decoration:underline; }
+
+  /* Two-section banner above table */
+  .ws-banner { display:grid; grid-template-columns: minmax(0, 4fr) minmax(0, 3fr);
+    border-bottom:1px solid #E2E8F2; }
+  .ws-banner > div { padding:14px 18px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .ws-banner > div + div { border-left:1px solid #E2E8F2; }
+  .ws-banner h3 { font-family:'Space Grotesk'; font-weight:700; font-size:15px; color:#0A1628;
+    text-transform:uppercase; letter-spacing:.06em; }
+  .ws-banner .hint { font-size:11px; color:#5A6B85; }
+
+  /* Table — uses the same 6-column grid for both sections so rows align underneath */
+  .tbl-grid { display:grid;
+    grid-template-columns: minmax(0, 2.4fr) 95px 95px minmax(0, 1.4fr) minmax(0, 1.6fr) minmax(0, 1.6fr);
+    gap:0; }
+  .tbl-head { padding:10px 14px; background:#F7F9FC; border-bottom:1px solid #E2E8F2;
+    font-size:11px; text-transform:uppercase; letter-spacing:.06em; font-weight:600; color:#5A6B85;
+    display:flex; align-items:center; gap:6px; min-width:0; }
+  .tbl-head + .tbl-head { border-left:1px solid #EEF2F8; }
+  .tbl-cell { padding:14px; border-bottom:1px solid #EEF2F8; font-size:13px;
+    min-width:0; overflow:hidden; word-break:break-word; align-self:start; }
+  .tbl-cell + .tbl-cell { border-left:1px solid #F7F9FC; }
+  .task-title { font-weight:500; color:#0A1628; word-break:break-word; line-height:1.4; }
+  .task-meta  { font-size:11px; color:#5A6B85; margin-top:3px;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; word-break:break-word; }
+
+  /* Communication-log mini items — never overflow, wrap nicely */
+  .log-item { background:#fff; border:1px solid #EEF2F8; border-left:3px solid #1E6BFF; border-radius:6px;
+    padding:8px 10px; font-size:12px; cursor:pointer; transition:all .15s ease;
+    min-width:0; overflow:hidden; }
+  .log-item + .log-item { margin-top:6px; }
+  .log-item:hover { border-left-color:#0E4FCC; background:#F7F9FC; }
+  .log-item.expanded { background:#F7F9FC; }
+  .log-item.mom { border-left-color:#F97316; }
+  .log-item .log-head { display:flex; align-items:baseline; gap:6px; min-width:0; }
+  .log-item .log-date { font-weight:600; color:#0A1628; flex-shrink:0; font-size:11px; }
+  .log-item .log-subj { color:#5A6B85; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .log-item.expanded .log-subj { white-space:normal; word-break:break-word; }
+  .log-item .log-body { margin-top:6px; font-size:12px; color:#0A1628;
+    white-space:pre-wrap; word-break:break-word; line-height:1.5; }
+  .log-empty { font-size:12px; color:#5A6B85; font-style:italic; padding:4px 0; }
+
+  /* Modal */
+  .modal-back { position:fixed; inset:0; background:rgba(10,22,40,.55); z-index:50;
+    display:flex; align-items:center; justify-content:center; padding:16px;
+    backdrop-filter:blur(4px); animation:fadeIn .15s ease; }
+  .modal-card { background:#fff; border-radius:16px; width:100%; max-width:560px;
+    box-shadow:0 20px 60px rgba(10,22,40,.30); animation:pop .18s ease; max-height:92vh; overflow-y:auto; }
+  .modal-card.lg { max-width:780px; }
+  @keyframes fadeIn { from {opacity:0} to {opacity:1} }
+  @keyframes pop { from {opacity:0; transform:translateY(8px) scale(.98)} to {opacity:1; transform:translateY(0) scale(1)} }
+  .fade-up { opacity:0; transform:translateY(8px); animation:fadeUp .5s ease forwards; }
+  @keyframes fadeUp { to { opacity:1; transform:translateY(0); } }
+
+  .nice-scroll::-webkit-scrollbar { width:6px; height:6px; }
+  .nice-scroll::-webkit-scrollbar-thumb { background:#CBD5E1; border-radius:3px; }
+  .nice-scroll::-webkit-scrollbar-track { background:transparent; }
+
+  /* Partner picker dropdown — RENDERED AT BODY ROOT (fixed position) so it
+     escapes any parent stacking context created by transforms/animations. */
+  .pp-panel { position: fixed; z-index: 9999;
+    background:#fff; border:1px solid #E2E8F2; border-radius:12px;
+    box-shadow:0 16px 40px rgba(10,22,40,.18); width:300px; max-height:360px; overflow-y:auto;
+    animation:pop .12s ease; }
+  .pp-item { display:flex; align-items:center; gap:10px; padding:10px 12px; cursor:pointer;
+    border-bottom:1px solid #F7F9FC; font-size:14px; }
+  .pp-item:hover { background:#F7F9FC; }
+  .pp-item:last-child { border-bottom:none; }
+  .pp-item.active { background:rgba(30,107,255,.08); color:#0E4FCC; font-weight:500; }
+  .pp-item .pp-avatar { width:28px; height:28px; border-radius:50%; background:linear-gradient(135deg,#1E6BFF,#00C2FF);
+    color:#fff; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:12px; flex-shrink:0; }
+
+  /* Empty state */
+  .empty { display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:48px 24px; color:#5A6B85; text-align:center; font-size:14px;
+    border:1px dashed #CBD5E1; border-radius:14px; background:#fff; }
+
+  /* Tag (small editable list items) */
+  .mini-tag { display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+    font-size:12px; font-weight:500; background:#EEF2F8; color:#0A1628; }
+  .mini-tag button { color:#5A6B85; opacity:.7; }
+  .mini-tag button:hover { opacity:1; color:#EF4444; }
+
+  /* Add-partner inline list builders */
+  .pri-row { display:grid; grid-template-columns: 1fr auto auto; gap:8px; align-items:center; }
+
+  /* line clamp */
+  .line-clamp-2 { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+
+  /* Sub-task list in modal */
+  .sub-row { display:flex; align-items:center; gap:8px; padding:6px 8px; background:#F7F9FC;
+    border:1px solid #E2E8F2; border-radius:8px; }
+
+  /* ============================================================
+   *   Collapsible sidebar — tooltip on hover when collapsed
+   *   (Width + label hiding handled by the data-sidebar="collapsed" rules above.)
+   * ============================================================ */
+  body[data-sidebar="collapsed"] .nav-btn { position: relative; }
+  body[data-sidebar="collapsed"] .nav-btn:hover::after {
+    content: attr(data-name); position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+    background: #0A1628; color: #fff; padding: 6px 10px; border-radius: 6px;
+    font-size: 12px; white-space: nowrap; z-index: 100;
+    box-shadow: 0 4px 12px rgba(10,22,40,.30); pointer-events: none;
+    font-weight: 500;
+  }
+
+  /* Partner picker — positioning handled in JS via getBoundingClientRect.
+     position:fixed escapes any parent stacking context; high z-index keeps it above panels. */
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app" class="min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="cc-sidebar min-h-screen text-white flex flex-col" style="background: linear-gradient(180deg, #0A1628 0%, #142540 100%);">
+    <!-- Collapse/expand toggle -->
+    <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Toggle sidebar" title="Collapse sidebar">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+    </button>
+
+    <div class="px-6 pt-7 pb-6 border-b border-white/5">
+      <a href="index.html" class="brand-block flex items-center gap-3">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#1E6BFF,#00C2FF);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="font-display font-bold text-lg leading-none whitespace-nowrap">Command</div>
+          <div class="font-display text-eb-blueHi text-[11px] tracking-[.18em] uppercase mt-1 whitespace-nowrap">Center · v1</div>
+        </div>
+      </a>
+    </div>
+
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto overflow-x-hidden nice-scroll">
+      <div class="px-3 pb-2 text-[11px] tracking-[.18em] uppercase text-white/40 font-semibold nav-section-title">Verticals</div>
+      <div id="vertical-nav"></div>
+    </nav>
+
+    <div class="footer-row px-5 py-4 border-t border-white/5 flex items-center justify-between text-[12px] text-white/50">
+      <div class="flex items-center gap-2">
+        <span style="width:8px; height:8px; border-radius:50%; background:#10B981; flex-shrink:0;"></span>
+        <span class="footer-status-text">All systems online</span>
+      </div>
+      <span id="storage-mode" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-white/5 whitespace-nowrap">Local</span>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 min-h-screen overflow-x-hidden">
+
+    <!-- Top bar -->
+    <header class="px-8 pt-7 pb-5 flex items-end justify-between gap-6 fade-up">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-3 mb-3">
+          <a href="index.html" class="text-[12px] text-eb-muted hover:text-eb-blue flex items-center gap-1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg> Back to dashboard
+          </a>
+          <span class="text-eb-line">/</span>
+          <div class="text-[12px] text-eb-muted font-semibold tracking-[.1em] uppercase">Partnership &amp; Sales</div>
+        </div>
+
+        <!-- NOW SHOWING ribbon -->
+        <div id="now-showing" class="flex items-baseline flex-wrap gap-x-3 gap-y-2"></div>
+      </div>
+      <button class="btn-primary flex-shrink-0" id="add-partner-btn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Add Partner
+      </button>
+    </header>
+
+    <!-- Main content -->
+    <div class="px-8 pb-10 space-y-5">
+
+      <!-- Row: Priorities + KPI cards + Contact button -->
+      <section class="grid gap-5 fade-up" style="grid-template-columns: 220px minmax(0, 1fr);" id="overview-row">
+        <!-- Priorities -->
+        <div class="panel p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-display font-bold text-base text-eb-ink">Priorities</h3>
+            <button class="btn-add" id="add-priority-btn" title="Add priority">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          <div id="priority-list" class="space-y-1.5"></div>
+        </div>
+
+        <!-- KPIs (4 cards in 1 row) + Contact button below -->
+        <div class="flex flex-col gap-3 min-w-0">
+          <div class="grid grid-cols-5 gap-3 min-w-0" id="kpi-row"></div>
+          <button id="contact-btn" class="btn-ghost self-end" style="background:#0A1628; color:#fff; border-color:#0A1628;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+            <span id="contact-btn-label">View Contact</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- Tasks + Communication log -->
+      <section class="panel fade-up" style="animation-delay:.15s">
+        <!-- Two big section headings -->
+        <div class="ws-banner">
+          <div>
+            <h3>To Do</h3>
+            <span class="hint">Tasks for this partner</span>
+          </div>
+          <div>
+            <h3>Communication Log</h3>
+            <span class="hint">Emails &amp; meeting minutes</span>
+          </div>
+        </div>
+
+        <!-- Column headers -->
+        <div class="tbl-grid">
+          <div class="tbl-head">
+            <span>To-Do</span>
+            <button class="btn-add" id="add-task-btn" title="Add to-do">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="tbl-head">Start</div>
+          <div class="tbl-head">End</div>
+          <div class="tbl-head">Assignee</div>
+          <div class="tbl-head">
+            <span>Emails</span>
+            <button class="btn-add" id="add-email-btn" title="Add email">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          <div class="tbl-head">
+            <span>Minutes</span>
+            <button class="btn-add" id="add-mom-btn" title="Add minutes of meeting">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Body rows injected here -->
+        <div id="tasks-table" class="tbl-grid max-h-[520px] overflow-y-auto nice-scroll"></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- Hidden datalist for assignee autocomplete (populated from team members) -->
+<datalist id="team-emails-list"></datalist>
+<datalist id="team-names-list"></datalist>
+
+<div id="modal-root"></div>
+
+<script>
+/* ============================================================
+ *   CONFIG — flip USE_SUPABASE to true after creating tables
+ * ============================================================ */
+const CONFIG = {
+  USE_SUPABASE: false, // set to true once SUPABASE_URL + SUPABASE_ANON_KEY are filled
+  SUPABASE_URL: '',
+  SUPABASE_ANON_KEY: '',
+};
+
+/* ============================================================
+ *   STORAGE — localStorage today, Supabase tomorrow.
+ *   db.* methods are async so swapping is just rewriting them.
+ * ============================================================ */
+const KEYS = {
+  PARTNERS:    'cc_partners_v1',     // [{id, name, since, products[], priorities[], sizeBiz, volBiz, captain, spoc{}}]
+  EMAILS:      'cc_emails_v1',       // [{id, partnerId, date, subject, body, attachments[], checklist[]}]
+  MOMS:        'cc_moms_v1',         // [{id, partnerId, date, topic, minutes}]
+  TASKS:       'cc_tasks_v1',        // shared with landing page
+  TEAM:        'cc_team_v1',         // shared with landing page (Excel-uploaded team members)
+  COMM_LOG:    'cc_comm_log_v1',     // shared with landing page (assignment + ping emails)
+  CURRENT:     'cc_current_partner_v1',
+  USER:        'cc_user_v1',
+};
+const CURRENT_USER = 'Saurav';
+
+const ls = {
+  get: (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } },
+  set: (k, v) => localStorage.setItem(k, JSON.stringify(v)),
+};
+
+/* Supabase client (only created if configured). */
+let _sb = null;
+function sb() {
+  if (_sb) return _sb;
+  if (!CONFIG.USE_SUPABASE) return null;
+  if (!window.supabase) return null;
+  _sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+  return _sb;
+}
+
+/* camelCase ↔ snake_case bridge so the frontend stays clean while the DB uses
+   conventional snake_case. Field-list per table is explicit to avoid surprises. */
+const FIELD_MAP = {
+  partners:       { sizeBiz:'size_biz', volBiz:'vol_biz', createdAt:'created_at', updatedAt:'updated_at' },
+  tasks:          { partnerId:'partner_id', startDate:'start_date', createdAt:'created_at' },
+  partner_emails: { partnerId:'partner_id', createdAt:'created_at' },
+  partner_moms:   { partnerId:'partner_id', createdAt:'created_at' },
+};
+function toSnake(table, obj) {
+  const map = FIELD_MAP[table] || {};
+  const out = {};
+  for (const k of Object.keys(obj)) out[map[k] || k] = obj[k];
+  return out;
+}
+function toCamel(table, row) {
+  if (!row) return row;
+  const inverse = {};
+  for (const [k,v] of Object.entries(FIELD_MAP[table] || {})) inverse[v] = k;
+  const out = {};
+  for (const k of Object.keys(row)) out[inverse[k] || k] = row[k];
+  return out;
+}
+const fromCamel = (table, list) => (list||[]).map(r => toCamel(table, r));
+
+/* All read/writes go through `db`. The Supabase branches map 1:1 to the SQL in README. */
+const db = {
+  async listPartners() {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partners').select('*').order('name');
+      if (error) throw error; return fromCamel('partners', data);
+    }
+    return ls.get(KEYS.PARTNERS, []);
+  },
+  async upsertPartner(p) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partners').upsert(toSnake('partners', p)).select().single();
+      if (error) throw error; return toCamel('partners', data);
+    }
+    const all = ls.get(KEYS.PARTNERS, []);
+    const i = all.findIndex(x => x.id === p.id);
+    if (i >= 0) all[i] = p; else all.push(p);
+    ls.set(KEYS.PARTNERS, all); return p;
+  },
+  async listEmails(partnerId) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partner_emails').select('*').eq('partner_id', partnerId).order('date',{ascending:false});
+      if (error) throw error; return fromCamel('partner_emails', data);
+    }
+    return ls.get(KEYS.EMAILS, []).filter(e => e.partnerId === partnerId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  },
+  async addEmail(e) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partner_emails').insert(toSnake('partner_emails', e)).select().single();
+      if (error) throw error; return toCamel('partner_emails', data);
+    }
+    const all = ls.get(KEYS.EMAILS, []); all.push(e); ls.set(KEYS.EMAILS, all); return e;
+  },
+  async listMoMs(partnerId) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partner_moms').select('*').eq('partner_id', partnerId).order('date',{ascending:false});
+      if (error) throw error; return fromCamel('partner_moms', data);
+    }
+    return ls.get(KEYS.MOMS, []).filter(m => m.partnerId === partnerId).sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  },
+  async addMoM(m) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('partner_moms').insert(toSnake('partner_moms', m)).select().single();
+      if (error) throw error; return toCamel('partner_moms', data);
+    }
+    const all = ls.get(KEYS.MOMS, []); all.push(m); ls.set(KEYS.MOMS, all); return m;
+  },
+  async listTasks(partnerId) {
+    // Tasks are shared with the landing-page store; we filter by partnerId tag
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('tasks').select('*').eq('partner_id', partnerId).order('deadline');
+      if (error) throw error; return fromCamel('tasks', data);
+    }
+    return ls.get(KEYS.TASKS, []).filter(t => t.partnerId === partnerId)
+                                  .sort((a,b)=>(a.deadline||'').localeCompare(b.deadline||''));
+  },
+  async addTask(t) {
+    if (CONFIG.USE_SUPABASE && sb()) {
+      const { data, error } = await sb().from('tasks').insert(toSnake('tasks', t)).select().single();
+      if (error) throw error; return toCamel('tasks', data);
+    }
+    const all = ls.get(KEYS.TASKS, []); all.push(t); ls.set(KEYS.TASKS, all); return t;
+  },
+};
+
+/* ============================================================
+ *   HELPERS
+ * ============================================================ */
+const uid = () => 'id_' + Math.random().toString(36).slice(2,10) + Date.now().toString(36);
+const escapeHtml = (s='') => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+const fmtShort = (iso) => iso ? new Date(iso).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '—';
+const todayISO = () => new Date().toISOString().slice(0,10);
+const yearOf = (iso) => iso ? new Date(iso).getFullYear() : '—';
+const initials = (n='') => n.split(' ').filter(Boolean).slice(0,2).map(p=>p[0]?.toUpperCase()).join('') || '?';
+
+function toast(msg, type='ok') {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-lg text-white text-sm shadow-lg z-[100]';
+  t.style.background = type==='ok' ? '#10B981' : type==='warn' ? '#F59E0B' : '#EF4444';
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); },2400);
+}
+
+/* Read an uploaded File as a base64 data URL (works offline; no backend).
+   Caps individual files at 2 MB because localStorage has ~5 MB total budget
+   and we don't want one PDF to wipe out the rest of the app's data. */
+const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      return reject(new Error(`"${file.name}" is ${(file.size/1024/1024).toFixed(1)} MB — max 2 MB. Use a link to Drive/Dropbox instead.`));
+    }
+    const r = new FileReader();
+    r.onload  = () => resolve({ name: file.name, url: r.result, size: file.size, type: file.type });
+    r.onerror = () => reject(new Error('Could not read file: ' + file.name));
+    r.readAsDataURL(file);
+  });
+}
+
+/* Team members (shared with landing page — populated by Excel upload there). */
+function getTeam() { return ls.get(KEYS.TEAM, []); }
+function findTeamMember(query) {
+  if (!query) return null;
+  const q = String(query).trim().toLowerCase();
+  const team = getTeam();
+  return team.find(p => p.name.toLowerCase() === q || p.email.toLowerCase() === q) ||
+         team.find(p => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)) ||
+         null;
+}
+function refreshAssigneeDatalists() {
+  // Used by every modal that asks for an assignee. Datalist provides native autocomplete.
+  const team = getTeam();
+  const namesDl = document.getElementById('team-names-list');
+  if (namesDl) {
+    namesDl.innerHTML = team.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(p.email)}</option>`).join('') +
+      `<option value="${CURRENT_USER}">Me</option>`;
+  }
+}
+
+/* Send an assignment-notification email via the user's mail client.
+   Records it in cc_comm_log_v1 so the landing page can surface it.
+   FUTURE: replace with /api/send-email backend call (SendGrid/SES). */
+function sendAssignmentEmail(task, member) {
+  const subject = `[New task assigned] ${task.title}`;
+  const body =
+`Hi ${member.name.split(' ')[0]},
+
+You've been assigned a new task. Details below:
+
+Task: ${task.title}
+Vertical: ${task.vertical || '—'}
+Start date: ${task.startDate ? new Date(task.startDate).toLocaleDateString('en-IN') : '—'}
+Due date:   ${task.deadline  ? new Date(task.deadline ).toLocaleDateString('en-IN') : '—'}
+${task.content ? '\nDescription:\n' + task.content : ''}
+${task.subtasks?.length ? '\nSub-tasks:\n' + task.subtasks.map(s => '  • ' + s).join('\n') : ''}
+
+You can reply to this email with progress updates and they'll be logged automatically.
+
+Thanks,
+Saurav`;
+
+  // Open the user's mail client (works in every browser without a backend)
+  window.location.href = `mailto:${encodeURIComponent(member.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  // Log the outbound communication (shared key with landing page)
+  const log = ls.get(KEYS.COMM_LOG, []);
+  log.push({ id: uid(), taskId: task.id, to: member.email, subject, body,
+             ts: Date.now(), direction: 'outbound (assignment)' });
+  ls.set(KEYS.COMM_LOG, log);
+}
+function showModal(html, lg=false) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-back"><div class="modal-card ${lg?'lg':''}">${html}</div></div>`;
+  root.querySelector('.modal-back').addEventListener('click', e => { if (e.target.classList.contains('modal-back')) closeModal(); });
+  root.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+}
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+
+/* ============================================================
+ *   SIDEBAR
+ * ============================================================ */
+const VERTICALS = [
+  { key:'data-repository',         name:'Data Repository',        icon:'M21 8v13H3V8M1 3h22v5H1zM10 12h4', href:'#' },
+  { key:'partnership-sales',       name:'Partnership & Sales',    icon:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75', href:'partnership.html', active:true },
+  { key:'investment',              name:'Investment',             icon:'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6', href:'#' },
+  { key:'automation',              name:'Automation',             icon:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83', href:'#' },
+  { key:'execution',               name:'Execution',              icon:'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3', href:'#' },
+  { key:'physical-infrastructure', name:'Physical Infrastructure',icon:'M3 21h18M5 21V7l8-4v18M19 21V11l-6-4', href:'#' },
+  { key:'finance',                 name:'Finance',                icon:'M3 3v18h18M7 14l4-4 4 4 6-6', href:'#' },
+  { key:'hrbp',                    name:'HRBP',                   icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11h-6M19 8v6', href:'#' },
+  { key:'vision',                  name:'Vision',                 icon:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', href:'#' },
+];
+function renderSidebar() {
+  document.getElementById('vertical-nav').innerHTML = VERTICALS.map((v,i)=>`
+    <button class="nav-btn ${v.active?'active':''}" data-href="${v.href}" data-name="${escapeHtml(v.name)}" data-tip="${escapeHtml(v.name)}" style="animation: fadeUp .4s ease ${i*30}ms both;" title="${escapeHtml(v.name)}">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${v.icon}"/></svg>
+      </span>
+      <span class="flex-1 text-left label-when-open">${v.name}</span>
+    </button>
+  `).join('');
+  document.querySelectorAll('#vertical-nav .nav-btn').forEach(b => b.onclick = () => {
+    const h = b.dataset.href;
+    if (h && h !== '#') location.href = h;
+    else toast(`${b.dataset.name} page coming next.`, 'ok');
+  });
+}
+
+/* Sidebar collapse state — persisted across pages so it stays consistent */
+function applySidebarState() {
+  const collapsed = ls.get('cc_sidebar_collapsed_v1', false);
+  document.body.dataset.sidebar = collapsed ? 'collapsed' : 'open';
+  const btn = document.getElementById('sidebar-toggle');
+  if (btn) btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+function toggleSidebar() {
+  const cur = document.body.dataset.sidebar === 'collapsed';
+  ls.set('cc_sidebar_collapsed_v1', !cur);
+  applySidebarState();
+}
+
+/* ============================================================
+ *   PARTNER STATE
+ * ============================================================ */
+let partners = [];
+let currentPartnerId = null;
+
+async function loadAll() {
+  partners = await db.listPartners();
+  if (!partners.length) seedExamplePartner(); // first-run friendly
+  partners = await db.listPartners();
+  const stored = ls.get(KEYS.CURRENT, null);
+  currentPartnerId = (stored && partners.some(p => p.id === stored)) ? stored : partners[0]?.id || null;
+  await renderEverything();
+}
+function seedExamplePartner() {
+  const p = {
+    id: uid(),
+    name: 'Bosch India',
+    since: '2022-04-01',
+    products: ['Embedded Controllers', 'PCB Assembly'],
+    priorities: [
+      { id: uid(), text: 'Close MSA renewal' },
+      { id: uid(), text: 'Increase order volume by 20%' },
+      { id: uid(), text: 'Quarterly business review' },
+    ],
+    sizeBiz: { unit: 'crores', value: 12.50 },
+    volBiz:  { unit: 'lakhs',  value: 4.75 },
+    captain: 'Aditya Verma',
+    spoc: { name: 'Rajesh Kumar', designation: 'Head of Procurement', email: 'rajesh.kumar@bosch.com', phoneCC: '+91', phone: '9876543210' },
+  };
+  ls.set(KEYS.PARTNERS, [p]);
+  // Seed a couple of tasks scoped to this partner so the workstream isn't empty
+  const tasks = ls.get(KEYS.TASKS, []);
+  tasks.push(
+    { id: uid(), partnerId: p.id, title: 'Review Bosch contract', assignee: 'Saurav', vertical: 'Partnership & Sales',
+      deadline: addDays(5), startDate: todayISO(), subtasks: [], documents: [], content: 'Legal flagged 2 clauses.' },
+    { id: uid(), partnerId: p.id, title: 'Send updated pricing deck', assignee: 'Karan Shah', vertical: 'Partnership & Sales',
+      deadline: addDays(9), startDate: todayISO(), subtasks: [], documents: [], content: '' },
+  );
+  ls.set(KEYS.TASKS, tasks);
+}
+function addDays(n) { const d = new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+
+/* ============================================================
+ *   RENDER — full page
+ * ============================================================ */
+async function renderEverything() {
+  if (!partners.length) {
+    renderEmptyShell();
+    return;
+  }
+  renderNowShowing();
+  renderPriorities();
+  await renderKpis();         // counts come from emails/moms
+  renderContactButtonLabel();
+  await renderWorkstream();   // tasks + comm log
+}
+function renderEmptyShell() {
+  document.getElementById('now-showing').innerHTML = `
+    <div class="now-showing-eyebrow">Now Showing</div>
+    <div class="now-showing-title">No partners yet</div>
+  `;
+  document.getElementById('priority-list').innerHTML = `<div class="text-[13px] text-eb-muted italic py-2">Add a partner to begin.</div>`;
+  document.getElementById('kpi-row').innerHTML = '';
+  document.getElementById('contact-btn-label').textContent = 'View Contact';
+  document.getElementById('tasks-table').innerHTML = `<div class="empty m-5" style="grid-column: 1 / -1;">Add a partner from the top-right to start tracking work.</div>`;
+}
+function currentPartner() { return partners.find(p => p.id === currentPartnerId); }
+
+/* --- Now Showing ribbon + partner picker dropdown --- */
+function renderNowShowing() {
+  const p = currentPartner(); if (!p) return;
+  const root = document.getElementById('now-showing');
+  const productList = (p.products && p.products.length) ? p.products.join(', ') : '—';
+  root.innerHTML = `
+    <div class="w-full flex flex-col">
+      <div class="now-showing-eyebrow mb-1">Now Showing</div>
+      <div class="flex items-baseline flex-wrap gap-3">
+        <span class="now-showing-title">${escapeHtml(p.name)}</span>
+        <button class="partner-select-trigger" id="partner-picker-btn" aria-label="Switch partner">
+          Switch
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+      </div>
+      <div class="partner-meta mt-2">
+        <b>Relationship since</b> ${yearOf(p.since)} &nbsp;|&nbsp; <b>Products:</b> ${escapeHtml(productList)}
+      </div>
+    </div>
+  `;
+  document.getElementById('partner-picker-btn').onclick = togglePartnerPicker;
+}
+function closePartnerPicker() {
+  document.querySelectorAll('.pp-panel').forEach(n => n.remove());
+  document.removeEventListener('click', _ppOutside, true);
+  window.removeEventListener('resize', closePartnerPicker);
+  window.removeEventListener('scroll', closePartnerPicker, true);
+}
+function _ppOutside(e) {
+  const panel = document.querySelector('.pp-panel');
+  const btn = document.getElementById('partner-picker-btn');
+  if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) closePartnerPicker();
+}
+function togglePartnerPicker() {
+  // If already open, close
+  if (document.querySelector('.pp-panel')) { closePartnerPicker(); return; }
+  const btn = document.getElementById('partner-picker-btn');
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+
+  // Append to body so it escapes any parent stacking context (transform-on-fade-up cards above us)
+  const panel = document.createElement('div');
+  panel.className = 'pp-panel';
+  panel.style.left = `${r.left}px`;
+  panel.style.top  = `${r.bottom + 6}px`;
+  // Keep panel inside viewport on the right
+  const winW = window.innerWidth;
+  if (r.left + 300 > winW - 16) panel.style.left = `${Math.max(16, winW - 316)}px`;
+
+  panel.innerHTML = partners.map(p => `
+    <div class="pp-item ${p.id===currentPartnerId?'active':''}" data-pick="${p.id}">
+      <div class="pp-avatar">${initials(p.name)}</div>
+      <div class="flex-1 min-w-0">
+        <div class="truncate">${escapeHtml(p.name)}</div>
+        <div class="text-[11px] text-eb-muted">since ${yearOf(p.since)}</div>
+      </div>
+      ${p.id===currentPartnerId?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#1E6BFF" stroke-width="2.5" stroke-linecap="round"><path d="m5 12 5 5L20 7"/></svg>':''}
+    </div>`).join('');
+
+  document.body.appendChild(panel);
+  panel.querySelectorAll('[data-pick]').forEach(i => i.onclick = () => {
+    currentPartnerId = i.dataset.pick;
+    ls.set(KEYS.CURRENT, currentPartnerId);
+    closePartnerPicker();
+    renderEverything();
+  });
+
+  // Click outside / scroll / resize to close. Use capture phase so we catch
+  // clicks even on elements with their own onclick handlers.
+  setTimeout(() => {
+    document.addEventListener('click', _ppOutside, true);
+    window.addEventListener('resize', closePartnerPicker);
+    window.addEventListener('scroll', closePartnerPicker, true);
+  }, 0);
+}
+
+/* --- Priorities --- */
+function renderPriorities() {
+  const p = currentPartner();
+  const root = document.getElementById('priority-list');
+  const list = p?.priorities || [];
+  if (!list.length) {
+    root.innerHTML = `<div class="text-[13px] text-eb-muted italic py-2">No priorities yet. Click + to add one.</div>`;
+    return;
+  }
+  root.innerHTML = list.map(pr => `
+    <div class="pri-item">
+      <span class="pri-bullet"></span>
+      <span class="pri-text">${escapeHtml(pr.text)}</span>
+      <button class="pri-rm" data-rm-pri="${pr.id}" title="Remove">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>`).join('');
+  root.querySelectorAll('[data-rm-pri]').forEach(b => b.onclick = async () => {
+    const partner = currentPartner(); if (!partner) return;
+    partner.priorities = (partner.priorities || []).filter(x => x.id !== b.dataset.rmPri);
+    try { await db.upsertPartner(partner); partners = await db.listPartners(); renderPriorities(); }
+    catch (err) { toast(err.message || 'Could not remove', 'danger'); }
+  });
+}
+
+/* --- Add priority (inline modal) --- */
+function openAddPriority() {
+  if (!ensurePartnerSelected()) return;
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Add Priority</h3>
+      <p class="text-eb-muted text-[13px] mb-4">A focus area for ${escapeHtml(currentPartner().name)}.</p>
+      <input id="pri-input" class="input" placeholder="e.g. Close MSA renewal" />
+      <div class="flex justify-end gap-2 mt-5">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="pri-save">Add</button>
+      </div>
+    </div>
+  `);
+  setTimeout(() => document.getElementById('pri-input').focus(), 50);
+  const save = async () => {
+    const v = document.getElementById('pri-input').value.trim();
+    if (!v) return toast('Priority text required', 'warn');
+    const partner = currentPartner();
+    partner.priorities = partner.priorities || [];
+    partner.priorities.push({ id: uid(), text: v });
+    try { await db.upsertPartner(partner); partners = await db.listPartners(); closeModal(); renderPriorities(); toast('Priority added'); }
+    catch (err) { toast(err.message || 'Could not save', 'danger'); }
+  };
+  document.getElementById('pri-save').onclick = save;
+  document.getElementById('pri-input').addEventListener('keydown', e => { if (e.key === 'Enter') save(); });
+}
+
+/* --- KPI cards --- */
+async function renderKpis() {
+  const p = currentPartner(); if (!p) return;
+  const emails = await db.listEmails(p.id);
+  const moms = await db.listMoMs(p.id);
+  const root = document.getElementById('kpi-row');
+
+  // Format size/volume tightly so they fit in narrow cards.
+  // Show short value + small unit; full value visible on hover via title attr.
+  const sizeVal = (p.sizeBiz?.value ?? 0).toFixed(2);
+  const volVal  = (p.volBiz?.value ?? 0).toFixed(2);
+  root.innerHTML = `
+    ${kpi('Size of Business', `₹${sizeVal}`, p.sizeBiz?.unit, `₹${sizeVal} ${p.sizeBiz?.unit||''}`)}
+    ${kpi('Volume of Business', volVal, p.volBiz?.unit, `${volVal} ${p.volBiz?.unit||''}`)}
+    ${kpi('Meetings', String(moms.length), 'till date', `${moms.length} meetings till date`)}
+    ${kpi('Emails', String(emails.length), 'till date', `${emails.length} emails till date`)}
+    ${kpi('Captain', p.captain || '—', '', p.captain || '')}
+  `;
+}
+function kpi(label, value, unit, fullTitle='') {
+  return `<div class="kpi" title="${escapeHtml(fullTitle)}">
+    <div class="kpi-label">${escapeHtml(label)}</div>
+    <div class="kpi-value">${escapeHtml(value)}${unit?`<span class="kpi-unit"> ${escapeHtml(unit)}</span>`:''}</div>
+  </div>`;
+}
+
+/* --- Contact (popup, triggered by header button) --- */
+function openContactPopup() {
+  const p = currentPartner(); if (!p) return toast('No partner selected', 'warn');
+  const s = p.spoc || {};
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <div class="text-[10px] tracking-[.16em] uppercase text-eb-blue font-bold">Single Point of Contact</div>
+          <h3 class="font-display font-bold text-xl text-eb-ink mt-1">${escapeHtml(s.name || '—')}</h3>
+        </div>
+        <div class="w-12 h-12 rounded-full flex items-center justify-center text-white font-semibold"
+             style="background: linear-gradient(135deg, #1E6BFF, #0A1628);">
+          ${escapeHtml(initials(s.name || '?'))}
+        </div>
+      </div>
+      <div class="space-y-3 text-[14px]">
+        <div class="flex items-start gap-3">
+          <span class="lbl !mb-0 w-24 pt-0.5">Designation</span>
+          <span class="text-eb-ink flex-1">${escapeHtml(s.designation || '—')}</span>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="lbl !mb-0 w-24 pt-0.5">Email</span>
+          <span class="text-eb-ink flex-1 break-all">
+            ${s.email ? `<a href="mailto:${escapeHtml(s.email)}" class="text-eb-blue hover:underline">${escapeHtml(s.email)}</a>` : '—'}
+          </span>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="lbl !mb-0 w-24 pt-0.5">Phone</span>
+          <span class="text-eb-ink flex-1">
+            ${(s.phoneCC || s.phone) ? `<a href="tel:${escapeHtml((s.phoneCC||'')+(s.phone||''))}" class="text-eb-blue hover:underline">${escapeHtml((s.phoneCC||'')+' '+(s.phone||''))}</a>` : '—'}
+          </span>
+        </div>
+        <div class="flex items-start gap-3">
+          <span class="lbl !mb-0 w-24 pt-0.5">Partner</span>
+          <span class="text-eb-ink flex-1">${escapeHtml(p.name)}</span>
+        </div>
+      </div>
+      <div class="flex justify-end mt-6">
+        <button class="btn-primary" data-close>Close</button>
+      </div>
+    </div>
+  `);
+}
+function renderContactButtonLabel() {
+  const p = currentPartner();
+  const label = document.getElementById('contact-btn-label');
+  if (!label) return;
+  label.textContent = (p && p.spoc?.name) ? `Contact · ${p.spoc.name.split(' ')[0]}` : 'View Contact';
+}
+
+/* ============================================================
+ *   WORKSTREAM (tasks + comm log columns)
+ *   The body is one big 6-column CSS grid. Each row contributes
+ *   exactly 6 cells so columns line up perfectly across rows.
+ * ============================================================ */
+let _emailsCache = [];
+let _momsCache = [];
+async function renderWorkstream() {
+  const p = currentPartner(); if (!p) return;
+  const tasks  = await db.listTasks(p.id);
+  _emailsCache = await db.listEmails(p.id);
+  _momsCache   = await db.listMoMs(p.id);
+
+  const root = document.getElementById('tasks-table');
+  if (!tasks.length && !_emailsCache.length && !_momsCache.length) {
+    root.innerHTML = `<div class="empty m-5" style="grid-column: 1 / -1;">
+      Use the <b class="mx-1">+</b> in any column header to start adding work for ${escapeHtml(p.name)}.
+    </div>`;
+    return;
+  }
+
+  // Number of rows = max of the three lists. Every row produces 6 cells.
+  const rowCount = Math.max(tasks.length, _emailsCache.length, _momsCache.length);
+  const cells = [];
+  for (let i=0; i<rowCount; i++) {
+    const t = tasks[i];
+    if (t) {
+      cells.push(`<div class="tbl-cell">
+        <div class="task-title">${escapeHtml(t.title)}</div>
+        ${t.content ? `<div class="task-meta">${escapeHtml(t.content)}</div>` : ''}
+      </div>`);
+      cells.push(`<div class="tbl-cell text-eb-ink">${fmtShort(t.startDate || '')}</div>`);
+      cells.push(`<div class="tbl-cell text-eb-ink">${fmtShort(t.deadline)}</div>`);
+      cells.push(`<div class="tbl-cell"><span class="mini-tag">${escapeHtml(t.assignee || '—')}</span></div>`);
+    } else {
+      cells.push(`<div class="tbl-cell text-eb-muted text-[12px]">—</div>`);
+      cells.push(`<div class="tbl-cell text-eb-muted text-[12px]">—</div>`);
+      cells.push(`<div class="tbl-cell text-eb-muted text-[12px]">—</div>`);
+      cells.push(`<div class="tbl-cell text-eb-muted text-[12px]">—</div>`);
+    }
+    const e = _emailsCache[i];
+    cells.push(`<div class="tbl-cell">${e ? renderLogItem(e, 'email') : '<span class="text-eb-muted text-[12px]">—</span>'}</div>`);
+    const m = _momsCache[i];
+    cells.push(`<div class="tbl-cell">${m ? renderLogItem(m, 'mom') : '<span class="text-eb-muted text-[12px]">—</span>'}</div>`);
+  }
+  root.innerHTML = cells.join('');
+
+  // Wire log-item expand/collapse
+  root.querySelectorAll('[data-log]').forEach(li => li.onclick = () => {
+    const id = li.dataset.log, type = li.dataset.type;
+    const item = (type==='email' ? _emailsCache : _momsCache).find(x => x.id === id);
+    if (!item) return;
+    const expanded = !li.classList.contains('expanded');
+    li.classList.toggle('expanded', expanded);
+    li.innerHTML = renderLogItemInner(item, type, expanded);
+  });
+}
+function renderLogItem(item, type) {
+  return `<div class="log-item ${type==='mom'?'mom':''}" data-log="${item.id}" data-type="${type}">
+    ${renderLogItemInner(item, type, false)}
+  </div>`;
+}
+function renderLogItemInner(item, type, expanded) {
+  const d = fmtShort(item.date);
+  if (type === 'email') {
+    const head = `<div class="log-head"><span class="log-date">${d}</span><span class="log-subj">${escapeHtml(item.subject || 'No subject')}</span></div>`;
+    if (!expanded) return head;
+    const checklist = (item.checklist || []).map(c => `<li class="flex items-start gap-2 text-[12px]"><span class="w-3 h-3 mt-0.5 rounded border border-eb-line flex-shrink-0"></span><span class="break-words">${escapeHtml(c)}</span></li>`).join('');
+    const atts = (item.attachments || []).map(a => `<a href="${escapeHtml(a.url || '#')}" ${a.url?.startsWith('data:')?'download="'+escapeHtml(a.name)+'"':''} class="text-eb-blue hover:underline text-[12px] block break-all">📎 ${escapeHtml(a.name)}</a>`).join('');
+    return `${head}
+      ${item.body ? `<div class="log-body">${escapeHtml(item.body)}</div>` : ''}
+      ${atts ? `<div class="mt-2">${atts}</div>` : ''}
+      ${checklist ? `<ul class="mt-2 space-y-1">${checklist}</ul>` : ''}
+    `;
+  }
+  const head = `<div class="log-head"><span class="log-date">${d}</span><span class="log-subj">${escapeHtml(item.topic || 'No topic')}</span></div>`;
+  if (!expanded) return head;
+  return `${head}${item.minutes ? `<div class="log-body">${escapeHtml(item.minutes)}</div>` : ''}`;
+}
+
+/* ============================================================
+ *   ADD PARTNER MODAL
+ * ============================================================ */
+document.getElementById('add-partner-btn').onclick = () => openAddPartner();
+function openAddPartner() {
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Add Partner</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Capture the data that powers this page for the new partner.</p>
+
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Name of Partner *</label><input id="ap-name" class="input" placeholder="Bosch India" /></div>
+          <div><label class="lbl">Relationship since *</label><input id="ap-since" type="date" class="input" max="${todayISO()}" /></div>
+        </div>
+
+        <div>
+          <label class="lbl">Products worked on</label>
+          <div class="flex gap-2"><input id="ap-prod-input" class="input sm" placeholder="Add a product and press Enter" /></div>
+          <div id="ap-prod-list" class="flex flex-wrap gap-2 mt-2"></div>
+        </div>
+
+        <div>
+          <label class="lbl">Priorities</label>
+          <div class="flex gap-2 items-stretch">
+            <input id="ap-pri-input" class="input sm" placeholder="Priority text — press Enter or click Add" />
+            <button class="btn-ghost" id="ap-pri-add">Add</button>
+          </div>
+          <div id="ap-pri-list" class="space-y-1.5 mt-2"></div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="lbl">Size of Business</label>
+            <div class="flex gap-2">
+              <select id="ap-size-unit" class="input sm" style="max-width:120px">
+                <option value="thousands">Thousands</option>
+                <option value="lakhs">Lakhs</option>
+                <option value="crores" selected>Crores</option>
+              </select>
+              <input id="ap-size-val" class="input sm" type="number" step="0.01" min="0" placeholder="0.00" />
+            </div>
+          </div>
+          <div>
+            <label class="lbl">Volume of Business</label>
+            <div class="flex gap-2">
+              <select id="ap-vol-unit" class="input sm" style="max-width:120px">
+                <option value="thousands">Thousands</option>
+                <option value="lakhs" selected>Lakhs</option>
+              </select>
+              <input id="ap-vol-val" class="input sm" type="number" step="0.01" min="0" placeholder="0.00" />
+            </div>
+          </div>
+        </div>
+
+        <div><label class="lbl">Captain Name</label><input id="ap-captain" class="input" placeholder="Aditya Verma" /></div>
+
+        <div class="border-t border-eb-line pt-4">
+          <div class="lbl mb-2">Contact Details of the SPOC</div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="lbl">Name</label><input id="ap-spoc-name" class="input sm" /></div>
+            <div><label class="lbl">Designation</label><input id="ap-spoc-desig" class="input sm" /></div>
+            <div><label class="lbl">Email</label><input id="ap-spoc-email" type="email" class="input sm" /></div>
+            <div>
+              <label class="lbl">Phone</label>
+              <div class="flex gap-2">
+                <input id="ap-spoc-cc" class="input sm" style="max-width:80px" value="+91" />
+                <input id="ap-spoc-phone" class="input sm" type="tel" inputmode="numeric" placeholder="9876543210" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="ap-save">Save Partner</button>
+      </div>
+    </div>
+  `, true);
+
+  // Local state for the modal
+  const products = [], priorities = [];
+
+  const reProducts = () => {
+    document.getElementById('ap-prod-list').innerHTML = products.map((p,i) => `
+      <span class="mini-tag">${escapeHtml(p)} <button data-rm-prod="${i}">×</button></span>`).join('');
+    document.querySelectorAll('[data-rm-prod]').forEach(b => b.onclick = () => { products.splice(+b.dataset.rmProd,1); reProducts(); });
+  };
+  document.getElementById('ap-prod-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault();
+      const v = e.target.value.trim(); if (v) { products.push(v); e.target.value=''; reProducts(); }
+    }
+  });
+
+  // Priorities — neutral, no levels
+  const rePri = () => {
+    document.getElementById('ap-pri-list').innerHTML = priorities.map((pr,i) => `
+      <div class="pri-item">
+        <span class="pri-bullet"></span>
+        <span class="pri-text">${escapeHtml(pr.text)}</span>
+        <button data-rm-pri="${i}" class="pri-rm" style="opacity:1;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>`).join('');
+    document.querySelectorAll('[data-rm-pri]').forEach(b => b.onclick = () => { priorities.splice(+b.dataset.rmPri,1); rePri(); });
+  };
+  const addPri = () => {
+    const v = document.getElementById('ap-pri-input').value.trim();
+    if (!v) return;
+    priorities.push({ id: uid(), text: v });
+    document.getElementById('ap-pri-input').value = '';
+    rePri();
+  };
+  document.getElementById('ap-pri-add').onclick = addPri;
+  document.getElementById('ap-pri-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); addPri(); }
+  });
+
+  // Validation regexes
+  const NAME_RE = /^[A-Za-z][A-Za-z\s\.\&\-']*$/; // alphabetic + a few naturals
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  const PHONE_RE = /^[0-9\s\-]{6,15}$/;
+  const CC_RE = /^\+?[0-9]{1,4}$/;
+
+  document.getElementById('ap-save').onclick = async () => {
+    const name = document.getElementById('ap-name').value.trim();
+    const since = document.getElementById('ap-since').value;
+    const sizeUnit = document.getElementById('ap-size-unit').value;
+    const sizeVal = parseFloat(document.getElementById('ap-size-val').value);
+    const volUnit = document.getElementById('ap-vol-unit').value;
+    const volVal = parseFloat(document.getElementById('ap-vol-val').value);
+    const captain = document.getElementById('ap-captain').value.trim();
+    const spocName = document.getElementById('ap-spoc-name').value.trim();
+    const spocDesig = document.getElementById('ap-spoc-desig').value.trim();
+    const spocEmail = document.getElementById('ap-spoc-email').value.trim();
+    const spocCC = document.getElementById('ap-spoc-cc').value.trim();
+    const spocPhone = document.getElementById('ap-spoc-phone').value.trim();
+
+    // Validation — fail fast with helpful messages, don't silently accept bad data
+    if (!name) return toast('Partner name is required', 'warn');
+    if (!NAME_RE.test(name)) return toast('Partner name should be alphabetic', 'warn');
+    if (!since) return toast('Relationship-since date is required', 'warn');
+    if (captain && !NAME_RE.test(captain)) return toast('Captain name should be alphabetic', 'warn');
+    if (spocName && !NAME_RE.test(spocName)) return toast('SPOC name should be alphabetic', 'warn');
+    if (spocDesig && !NAME_RE.test(spocDesig)) return toast('Designation should be alphabetic', 'warn');
+    if (spocEmail && !EMAIL_RE.test(spocEmail)) return toast('Invalid SPOC email', 'warn');
+    if (spocCC && !CC_RE.test(spocCC)) return toast('Country code looks off (try +91)', 'warn');
+    if (spocPhone && !PHONE_RE.test(spocPhone)) return toast('Phone number is invalid', 'warn');
+    if (!isNaN(sizeVal) && sizeVal < 0) return toast('Size of business cannot be negative', 'warn');
+    if (!isNaN(volVal)  && volVal  < 0) return toast('Volume of business cannot be negative', 'warn');
+
+    const partner = {
+      id: uid(), name, since,
+      products: [...products], priorities: [...priorities],
+      sizeBiz: { unit: sizeUnit, value: isNaN(sizeVal) ? 0 : Math.round(sizeVal*100)/100 },
+      volBiz:  { unit: volUnit,  value: isNaN(volVal)  ? 0 : Math.round(volVal *100)/100 },
+      captain,
+      spoc: { name: spocName, designation: spocDesig, email: spocEmail, phoneCC: spocCC, phone: spocPhone },
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await db.upsertPartner(partner);
+      partners = await db.listPartners();
+      currentPartnerId = partner.id;
+      ls.set(KEYS.CURRENT, currentPartnerId);
+      closeModal();
+      await renderEverything();
+      toast('Partner added');
+    } catch (err) { toast(err.message || 'Could not save partner', 'danger'); }
+  };
+}
+
+/* ============================================================
+ *   ADD TASK / EMAIL / MOM modals
+ * ============================================================ */
+document.getElementById('add-task-btn').onclick = () => openAddTask();
+document.getElementById('add-email-btn').onclick = () => openAddEmail();
+document.getElementById('add-mom-btn').onclick = () => openAddMoM();
+
+function ensurePartnerSelected() {
+  if (!currentPartner()) { toast('Add a partner first', 'warn'); return false; }
+  return true;
+}
+
+function openAddTask() {
+  if (!ensurePartnerSelected()) return;
+  refreshAssigneeDatalists(); // make sure datalist is current
+  const team = getTeam();
+  const teamHelp = team.length
+    ? `<span class="text-eb-muted">${team.length} team member${team.length>1?'s':''} available</span>`
+    : `<a href="index.html" class="text-eb-blue hover:underline">Upload your team on the dashboard first</a>`;
+
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">New To-Do</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Will appear here AND in the dashboard's To-Do/Tasks Assigned panels.</p>
+      <div class="space-y-4">
+        <div><label class="lbl">Title *</label><input id="t-title" class="input" placeholder="Send updated pricing deck" /></div>
+        <div class="grid grid-cols-3 gap-3">
+          <div><label class="lbl">Start date</label><input id="t-start" type="date" class="input sm" value="${todayISO()}" /></div>
+          <div><label class="lbl">Due date *</label><input id="t-due" type="date" class="input sm" min="${todayISO()}" /></div>
+          <div>
+            <label class="lbl">Assignee</label>
+            <input id="t-assignee" class="input sm" list="team-names-list" autocomplete="off"
+                   placeholder="Type a name or email..." value="${escapeHtml(CURRENT_USER)}" />
+            <div id="t-assignee-meta" class="text-[11px] mt-1">${teamHelp}</div>
+          </div>
+        </div>
+        <div>
+          <label class="lbl">Sub-tasks (checklist)</label>
+          <div class="flex gap-2"><input id="t-sub-input" class="input sm" placeholder="Sub-task — press Enter to add" /></div>
+          <div id="t-sub-list" class="space-y-1.5 mt-2"></div>
+        </div>
+        <div><label class="lbl">Description</label><textarea id="t-desc" class="input" rows="3" placeholder="Notes, context..."></textarea></div>
+        <div>
+          <label class="lbl">Attachments</label>
+          <div class="flex gap-2 items-stretch flex-wrap">
+            <label class="btn-ghost cursor-pointer flex-shrink-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload file<input id="t-file" type="file" multiple style="display:none" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.png,.jpg,.jpeg" />
+            </label>
+            <span class="text-[11px] text-eb-muted self-center">— or paste a link —</span>
+            <input id="t-att-name" class="input sm flex-1 min-w-[100px]" placeholder="Link name (e.g. pricing.pdf)" />
+            <input id="t-att-url"  class="input sm flex-1 min-w-[140px]" placeholder="Drive / Dropbox URL" />
+            <button class="btn-ghost flex-shrink-0" id="t-att-add">Add link</button>
+          </div>
+          <div id="t-att-list" class="space-y-1 mt-2"></div>
+          <p class="text-[11px] text-eb-muted mt-1">Files up to 2 MB upload directly. For larger files, paste a link.</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="t-save">Save</button>
+      </div>
+    </div>
+  `, true);
+
+  const subs = [], atts = [];
+  const reSubs = () => {
+    document.getElementById('t-sub-list').innerHTML = subs.map((s,i)=>`
+      <div class="sub-row"><span class="flex-1 text-[13px] break-words">${escapeHtml(s)}</span><button data-rm-sub="${i}" class="text-eb-muted hover:text-eb-danger flex-shrink-0">×</button></div>`).join('');
+    document.querySelectorAll('[data-rm-sub]').forEach(b => b.onclick = () => { subs.splice(+b.dataset.rmSub,1); reSubs(); });
+  };
+  document.getElementById('t-sub-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value.trim(); if (v) { subs.push(v); e.target.value=''; reSubs(); } }
+  });
+  const reAtts = () => {
+    document.getElementById('t-att-list').innerHTML = atts.map((a,i)=>{
+      const isUpload = a.url?.startsWith('data:');
+      return `<div class="sub-row">
+        <span class="flex-1 text-[13px] truncate">${isUpload?'📁':'🔗'} ${escapeHtml(a.name)}${isUpload?` <span class="text-[10px] text-eb-muted">(${(a.size/1024).toFixed(0)} KB)</span>`:` <span class="text-eb-muted">${escapeHtml(a.url)}</span>`}</span>
+        <button data-rm-att="${i}" class="text-eb-muted hover:text-eb-danger flex-shrink-0">×</button>
+      </div>`;
+    }).join('');
+    document.querySelectorAll('[data-rm-att]').forEach(b => b.onclick = () => { atts.splice(+b.dataset.rmAtt,1); reAtts(); });
+  };
+  // File upload
+  document.getElementById('t-file').onchange = async (e) => {
+    for (const f of e.target.files) {
+      try { atts.push(await readFileAsDataURL(f)); }
+      catch (err) { toast(err.message, 'warn'); }
+    }
+    e.target.value = ''; reAtts();
+  };
+  // Link add
+  document.getElementById('t-att-add').onclick = () => {
+    const n = document.getElementById('t-att-name').value.trim();
+    const u = document.getElementById('t-att-url').value.trim();
+    if (!n || !u) return toast('Both name and URL required for link','warn');
+    atts.push({ name:n, url:u });
+    document.getElementById('t-att-name').value = '';
+    document.getElementById('t-att-url').value = '';
+    reAtts();
+  };
+
+  // Assignee live-feedback (lets user know whether the email exists in team)
+  const assigneeInput = document.getElementById('t-assignee');
+  const assigneeMeta = document.getElementById('t-assignee-meta');
+  assigneeInput.addEventListener('input', () => {
+    const v = assigneeInput.value.trim();
+    if (!v || v.toLowerCase() === CURRENT_USER.toLowerCase()) {
+      assigneeMeta.innerHTML = teamHelp; return;
+    }
+    const m = findTeamMember(v);
+    if (m) assigneeMeta.innerHTML = `<span class="text-eb-ok">✓ ${escapeHtml(m.name)} — ${escapeHtml(m.email)}</span>`;
+    else   assigneeMeta.innerHTML = `<span class="text-eb-warn">No exact match in team. Save anyway and they won't get an auto-email.</span>`;
+  });
+
+  document.getElementById('t-save').onclick = async () => {
+    const title = document.getElementById('t-title').value.trim();
+    const due   = document.getElementById('t-due').value;
+    const start = document.getElementById('t-start').value;
+    const assigneeRaw = assigneeInput.value.trim() || CURRENT_USER;
+    const desc  = document.getElementById('t-desc').value.trim();
+    if (!title) return toast('Title is required', 'warn');
+    if (!due)   return toast('Due date is required', 'warn');
+    if (start && due && start > due) return toast('Start date cannot be after due date', 'warn');
+
+    // Resolve assignee — if the input matches a team member by name OR email, use the canonical name.
+    let assignee = assigneeRaw;
+    let member = null;
+    if (assigneeRaw.toLowerCase() !== CURRENT_USER.toLowerCase()) {
+      member = findTeamMember(assigneeRaw);
+      if (member) assignee = member.name;
+    }
+
+    const t = {
+      id: uid(), partnerId: currentPartnerId, title,
+      assignee, vertical: 'Partnership & Sales',
+      startDate: start, deadline: due,
+      subtasks: [...subs], documents: [...atts],
+      content: desc, createdAt: new Date().toISOString(),
+    };
+    try {
+      await db.addTask(t);
+      closeModal();
+      await renderWorkstream();
+      toast('Task added');
+      // Fire assignment email if assignee is a team member
+      if (member) {
+        // Slight delay so the toast is visible before the mail client takes focus
+        setTimeout(() => sendAssignmentEmail(t, member), 400);
+      } else if (assignee.toLowerCase() !== CURRENT_USER.toLowerCase()) {
+        toast(`Assignee "${assignee}" isn't in your team list — no email sent.`, 'warn');
+      }
+    }
+    catch (err) { toast(err.message || 'Could not save task', 'danger'); }
+  };
+}
+
+function openAddEmail() {
+  if (!ensurePartnerSelected()) return;
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Log Email</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Record an email sent or received for ${escapeHtml(currentPartner().name)}.</p>
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Date *</label><input id="e-date" type="date" class="input sm" value="${todayISO()}" /></div>
+          <div><label class="lbl">Subject *</label><input id="e-subject" class="input sm" placeholder="MSA renewal — final draft" /></div>
+        </div>
+        <div><label class="lbl">Body</label><textarea id="e-body" class="input" rows="5" placeholder="Email body..."></textarea></div>
+        <div>
+          <label class="lbl">Attachments</label>
+          <div class="flex gap-2 items-stretch flex-wrap">
+            <label class="btn-ghost cursor-pointer flex-shrink-0">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload<input id="e-file" type="file" multiple style="display:none" />
+            </label>
+            <span class="text-[11px] text-eb-muted self-center">— or —</span>
+            <input id="e-att-name" class="input sm flex-1 min-w-[100px]" placeholder="Link name" />
+            <input id="e-att-url"  class="input sm flex-1 min-w-[140px]" placeholder="URL" />
+            <button class="btn-ghost flex-shrink-0" id="e-att-add">Add link</button>
+          </div>
+          <div id="e-att-list" class="space-y-1 mt-2"></div>
+        </div>
+        <div>
+          <label class="lbl">Checklist of tasks (mentioned in email)</label>
+          <div class="flex gap-2"><input id="e-chk-input" class="input sm" placeholder="Press Enter to add" /></div>
+          <div id="e-chk-list" class="space-y-1.5 mt-2"></div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="e-save">Save Email</button>
+      </div>
+    </div>
+  `, true);
+
+  const atts = [], chk = [];
+  const reAtts = () => {
+    document.getElementById('e-att-list').innerHTML = atts.map((a,i)=>{
+      const isUpload = a.url?.startsWith('data:');
+      return `<div class="sub-row">
+        <span class="flex-1 text-[13px] truncate">${isUpload?'📁':'🔗'} ${escapeHtml(a.name)}${isUpload?` <span class="text-[10px] text-eb-muted">(${(a.size/1024).toFixed(0)} KB)</span>`:` <span class="text-eb-muted">${escapeHtml(a.url)}</span>`}</span>
+        <button data-rm-att="${i}" class="text-eb-muted hover:text-eb-danger flex-shrink-0">×</button>
+      </div>`;
+    }).join('');
+    document.querySelectorAll('[data-rm-att]').forEach(b => b.onclick = () => { atts.splice(+b.dataset.rmAtt,1); reAtts(); });
+  };
+  document.getElementById('e-file').onchange = async (e) => {
+    for (const f of e.target.files) {
+      try { atts.push(await readFileAsDataURL(f)); }
+      catch (err) { toast(err.message, 'warn'); }
+    }
+    e.target.value = ''; reAtts();
+  };
+  document.getElementById('e-att-add').onclick = () => {
+    const n = document.getElementById('e-att-name').value.trim();
+    const u = document.getElementById('e-att-url').value.trim();
+    if (!n || !u) return toast('Name and URL required', 'warn');
+    atts.push({ name:n, url:u });
+    document.getElementById('e-att-name').value=''; document.getElementById('e-att-url').value=''; reAtts();
+  };
+  const reChk = () => {
+    document.getElementById('e-chk-list').innerHTML = chk.map((s,i)=>`
+      <div class="sub-row"><span class="flex-1 text-[13px] break-words">${escapeHtml(s)}</span><button data-rm-chk="${i}" class="text-eb-muted hover:text-eb-danger flex-shrink-0">×</button></div>`).join('');
+    document.querySelectorAll('[data-rm-chk]').forEach(b => b.onclick = () => { chk.splice(+b.dataset.rmChk,1); reChk(); });
+  };
+  document.getElementById('e-chk-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); const v = e.target.value.trim(); if (v) { chk.push(v); e.target.value=''; reChk(); } }
+  });
+
+  document.getElementById('e-save').onclick = async () => {
+    const date = document.getElementById('e-date').value;
+    const subject = document.getElementById('e-subject').value.trim();
+    if (!date || !subject) return toast('Date and subject required', 'warn');
+    const e = {
+      id: uid(), partnerId: currentPartnerId, date, subject,
+      body: document.getElementById('e-body').value.trim(),
+      attachments: [...atts], checklist: [...chk],
+      createdAt: new Date().toISOString(),
+    };
+    try { await db.addEmail(e); closeModal(); await renderKpis(); await renderWorkstream(); toast('Email logged'); }
+    catch (err) { toast(err.message || 'Could not save', 'danger'); }
+  };
+}
+
+function openAddMoM() {
+  if (!ensurePartnerSelected()) return;
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Log Minutes of Meeting</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Capture meeting minutes for ${escapeHtml(currentPartner().name)}.</p>
+      <div class="space-y-4">
+        <div class="grid grid-cols-2 gap-3">
+          <div><label class="lbl">Date *</label><input id="m-date" type="date" class="input sm" value="${todayISO()}" /></div>
+          <div><label class="lbl">Topic *</label><input id="m-topic" class="input sm" placeholder="Quarterly Business Review" /></div>
+        </div>
+        <div><label class="lbl">Minutes *</label><textarea id="m-minutes" class="input" rows="8" placeholder="Decisions taken, action items, attendees..."></textarea></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="m-save">Save</button>
+      </div>
+    </div>
+  `, true);
+
+  document.getElementById('m-save').onclick = async () => {
+    const date = document.getElementById('m-date').value;
+    const topic = document.getElementById('m-topic').value.trim();
+    const minutes = document.getElementById('m-minutes').value.trim();
+    if (!date || !topic || !minutes) return toast('All fields required', 'warn');
+    const m = { id: uid(), partnerId: currentPartnerId, date, topic, minutes, createdAt: new Date().toISOString() };
+    try { await db.addMoM(m); closeModal(); await renderKpis(); await renderWorkstream(); toast('Minutes logged'); }
+    catch (err) { toast(err.message || 'Could not save', 'danger'); }
+  };
+}
+
+/* ============================================================
+ *   INIT
+ * ============================================================ */
+async function init() {
+  document.getElementById('storage-mode').textContent = CONFIG.USE_SUPABASE ? 'Supabase' : 'Local';
+  applySidebarState();
+  document.getElementById('sidebar-toggle').onclick = toggleSidebar;
+  renderSidebar();
+  // Wire global buttons
+  document.getElementById('add-priority-btn').onclick = openAddPriority;
+  document.getElementById('contact-btn').onclick = openContactPopup;
+  refreshAssigneeDatalists();
+  try {
+    await loadAll();
+  } catch (err) {
+    console.error(err);
+    toast('Storage error: ' + (err.message || err), 'danger');
+  }
+}
+init();
+</script>
+</body>
+</html>
