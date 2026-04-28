@@ -6,6 +6,8 @@
 -- Open-access RLS for now: anyone with the anon key can read/
 -- write. When you want to scope per user/org, replace the open
 -- policies at the bottom with auth.uid()-based ones.
+--
+-- This script is idempotent — safe to re-run.
 -- ============================================================
 
 -- Make sure pgcrypto is available for gen_random_uuid()
@@ -69,10 +71,30 @@ create table if not exists public.partner_moms (
   attendees     text,
   agenda        text,
   notes         text,
-  action_items  text,
+  action_items  jsonb default '[]'::jsonb,   -- [{text, assignee, done}]
   created_at    timestamptz default now()
 );
 create index if not exists partner_moms_partner_idx on public.partner_moms(partner_id);
+
+-- One-time migration: if action_items was previously a text column, convert it
+-- to jsonb, wrapping any pre-existing string into a single checklist item.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'partner_moms'
+      and column_name = 'action_items' and data_type = 'text'
+  ) then
+    alter table public.partner_moms
+      alter column action_items drop default,
+      alter column action_items type jsonb
+        using case
+          when action_items is null or btrim(action_items) = '' then '[]'::jsonb
+          else jsonb_build_array(jsonb_build_object('text', action_items, 'assignee', '', 'done', false))
+        end,
+      alter column action_items set default '[]'::jsonb;
+  end if;
+end $$;
 
 -- ============================================================
 -- STORAGE BUCKET (for task attachments)
@@ -101,9 +123,15 @@ create policy partner_emails_open on public.partner_emails for all to anon, auth
 create policy partner_moms_open   on public.partner_moms   for all to anon, authenticated using (true) with check (true);
 
 -- Storage bucket: open read + write for anon
-drop policy if exists partnership_attachments_read  on storage.objects;
-drop policy if exists partnership_attachments_write on storage.objects;
-create policy partnership_attachments_read  on storage.objects for select to anon, authenticated using  (bucket_id = 'partnership-attachments');
-create policy partnership_attachments_write on storage.objects for insert to anon, authenticated with check (bucket_id = 'partnership-attachments');
-create policy partnership_attachments_update on storage.objects for update to anon, authenticated using  (bucket_id = 'partnership-attachments') with check (bucket_id = 'partnership-attachments');
-create policy partnership_attachments_delete on storage.objects for delete to anon, authenticated using  (bucket_id = 'partnership-attachments');
+-- Drop ALL four policies (read/write/update/delete) before re-creating —
+-- earlier versions of this file only dropped two, which is what caused
+-- "policy partnership_attachments_update for table objects already exists".
+drop policy if exists partnership_attachments_read    on storage.objects;
+drop policy if exists partnership_attachments_write   on storage.objects;
+drop policy if exists partnership_attachments_update  on storage.objects;
+drop policy if exists partnership_attachments_delete  on storage.objects;
+
+create policy partnership_attachments_read    on storage.objects for select to anon, authenticated using  (bucket_id = 'partnership-attachments');
+create policy partnership_attachments_write   on storage.objects for insert to anon, authenticated with check (bucket_id = 'partnership-attachments');
+create policy partnership_attachments_update  on storage.objects for update to anon, authenticated using  (bucket_id = 'partnership-attachments') with check (bucket_id = 'partnership-attachments');
+create policy partnership_attachments_delete  on storage.objects for delete to anon, authenticated using  (bucket_id = 'partnership-attachments');

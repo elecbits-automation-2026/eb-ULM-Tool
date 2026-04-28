@@ -225,6 +225,58 @@
   .chip-rm:hover { color:#EF4444; border-color:#EF4444; }
 
   .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+
+  /* Collapsible sidebar */
+  aside#sidebar { width:22rem; transition:width .25s ease; flex-shrink:0; overflow:hidden; }
+  aside#sidebar.collapsed { width:4.25rem; }
+  aside#sidebar .nav-label,
+  aside#sidebar .brand-text,
+  aside#sidebar .nav-section-label,
+  aside#sidebar .back-label { transition:opacity .15s ease; }
+  aside#sidebar.collapsed .nav-label,
+  aside#sidebar.collapsed .brand-text,
+  aside#sidebar.collapsed .nav-section-label,
+  aside#sidebar.collapsed .back-label { opacity:0; pointer-events:none; width:0; overflow:hidden; white-space:nowrap; }
+  aside#sidebar.collapsed .nav-btn { justify-content:center; padding:14px 12px; }
+  aside#sidebar.collapsed .brand-link { justify-content:center; }
+  aside#sidebar.collapsed .back-link { justify-content:center; }
+  aside#sidebar.collapsed .sidebar-footer { justify-content:center; }
+  .sb-toggle {
+    position:absolute; top:22px; right:-12px; z-index:5;
+    width:24px; height:24px; border-radius:999px; background:#1E6BFF; color:#fff;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    border:2px solid #142540; box-shadow:0 2px 6px rgba(10,22,40,.25); transition:transform .2s ease, background .15s ease;
+  }
+  .sb-toggle:hover { background:#0E4FCC; }
+  aside#sidebar.collapsed .sb-toggle svg { transform:rotate(180deg); }
+  .sb-toggle svg { transition:transform .25s ease; }
+  main#main { min-width:0; } /* prevents flex overflow / data leakage */
+
+  /* Document row */
+  .doc-row {
+    display:flex; align-items:center; gap:12px; padding:12px 14px;
+    border:1px solid #E2E8F2; border-radius:10px; background:#fff;
+    transition:all .15s ease;
+  }
+  .doc-row:hover { border-color:#1E6BFF; box-shadow:0 4px 10px rgba(10,22,40,.06); }
+  .doc-icon {
+    width:36px; height:36px; border-radius:8px; flex-shrink:0;
+    background:rgba(30,107,255,.10); color:#1E6BFF;
+    display:inline-flex; align-items:center; justify-content:center;
+  }
+
+  /* Action item row inside MoM detail */
+  .ai-row {
+    display:flex; align-items:flex-start; gap:8px; padding:6px 0;
+    font-size:13px; color:#0A1628;
+  }
+  .ai-row input[type=checkbox] { margin-top:3px; flex-shrink:0; cursor:pointer; }
+  .ai-row .ai-text { flex:1; }
+  .ai-row.done .ai-text { text-decoration:line-through; color:#5A6B85; }
+  .ai-assignee {
+    background:rgba(30,107,255,.10); color:#1E6BFF; font-size:11px; font-weight:600;
+    padding:2px 8px; border-radius:999px; flex-shrink:0;
+  }
 </style>
 </head>
 <body class="min-h-screen">
@@ -232,35 +284,38 @@
 <div id="app" class="min-h-screen flex">
 
   <!-- ============== SIDEBAR ============== -->
-  <aside class="w-[22rem] min-h-screen bg-eb-ink text-white flex flex-col" style="background:linear-gradient(180deg,#0A1628 0%,#142540 100%);">
+  <aside id="sidebar" class="min-h-screen bg-eb-ink text-white flex flex-col relative" style="background:linear-gradient(180deg,#0A1628 0%,#142540 100%);">
+    <button class="sb-toggle" id="sidebar-toggle" title="Collapse / expand sidebar" aria-label="Toggle sidebar">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
     <div class="px-6 pt-7 pb-6 border-b border-white/5">
-      <a href="index.html" class="flex items-center gap-3 hover:opacity-90 transition">
-        <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:linear-gradient(135deg,#1E6BFF,#00C2FF);">
+      <a href="index.html" class="brand-link flex items-center gap-3 hover:opacity-90 transition">
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style="background:linear-gradient(135deg,#1E6BFF,#00C2FF);">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
             <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
           </svg>
         </div>
-        <div>
+        <div class="brand-text">
           <div class="font-display font-bold text-lg leading-none">Command</div>
           <div class="font-display text-eb-blueHi text-[11px] tracking-[.18em] uppercase mt-1">Center · v1</div>
         </div>
       </a>
     </div>
     <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto nice-scroll">
-      <div class="px-3 pb-2 text-[11px] tracking-[.18em] uppercase text-white/40 font-semibold">Verticals</div>
+      <div class="nav-section-label px-3 pb-2 text-[11px] tracking-[.18em] uppercase text-white/40 font-semibold">Verticals</div>
       <div id="vertical-nav"></div>
     </nav>
-    <div class="px-5 py-4 border-t border-white/5 flex items-center justify-between text-[12px] text-white/50">
-      <a href="index.html" class="hover:text-white transition flex items-center gap-2">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        Back to dashboard
+    <div class="sidebar-footer px-5 py-4 border-t border-white/5 flex items-center justify-between text-[12px] text-white/50">
+      <a href="index.html" class="back-link hover:text-white transition flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="flex-shrink-0"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+        <span class="back-label">Back to dashboard</span>
       </a>
     </div>
   </aside>
 
   <!-- ============== MAIN ============== -->
-  <main class="flex-1 min-h-screen flex flex-col">
+  <main id="main" class="flex-1 min-h-screen flex flex-col">
 
     <!-- Header bar with Now Showing + Add -->
     <header class="px-8 pt-7 pb-5 fade-up">
@@ -367,6 +422,20 @@
 
     </section>
 
+    <!-- Documents — all attachments for this partner -->
+    <section class="px-8 pb-10 fade-up" style="animation-delay:.15s">
+      <div class="panel p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">Documents</h2>
+            <p class="text-[12px] text-eb-muted">All files attached to to-dos for this partner</p>
+          </div>
+          <span id="doc-count" class="text-[12px] text-eb-muted"></span>
+        </div>
+        <div id="doc-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+      </div>
+    </section>
+
   </main>
 </div>
 
@@ -392,6 +461,7 @@ const CACHE = {
   PARTNER_TASKS:   'cc_partner_tasks_v1',
   PARTNER_EMAILS:  'cc_partner_emails_v1',
   PARTNER_MOMS:    'cc_partner_moms_v1',
+  SIDEBAR_COLLAPSED:'cc_sidebar_collapsed_v1',
 };
 
 const get = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
@@ -429,8 +499,23 @@ const fromDbEmail = r => ({
 });
 const fromDbMoM = r => ({
   id: r.id, partner_id: r.partner_id, date: r.date, heading: r.heading,
-  attendees: r.attendees, agenda: r.agenda, notes: r.notes, action_items: r.action_items,
+  attendees: r.attendees, agenda: r.agenda, notes: r.notes,
+  action_items: parseActionItems(r.action_items),
 });
+
+// Backward-compat shim: action_items used to be a free-text column.
+// Now it's a JSON array of {text, assignee, done}. If we encounter a
+// legacy string, wrap it as a single unchecked checklist item.
+function parseActionItems(raw) {
+  if (Array.isArray(raw)) return raw.map(x => ({
+    text: x.text || '', assignee: x.assignee || '', done: !!x.done,
+  }));
+  if (raw && typeof raw === 'object') return [];
+  if (typeof raw === 'string' && raw.trim()) {
+    return [{ text: raw.trim(), assignee: '', done: false }];
+  }
+  return [];
+}
 
 // Pull everything for the workspace. Updates the cache, then re-renders.
 async function loadFromSupabase() {
@@ -501,11 +586,11 @@ const VERTICALS = [
 function renderVerticalNav() {
   const root = document.getElementById('vertical-nav');
   root.innerHTML = VERTICALS.map((v,i)=>`
-    <button class="nav-btn ${v.key==='partnership-sales'?'active':''}" data-key="${v.key}" style="animation:fadeUp .4s ease ${i*40}ms both;">
+    <button class="nav-btn ${v.key==='partnership-sales'?'active':''}" data-key="${v.key}" title="${v.name}" style="animation:fadeUp .4s ease ${i*40}ms both;">
       <span class="nav-icon">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${v.icon}"/></svg>
       </span>
-      <span class="flex-1">${v.name}</span>
+      <span class="nav-label flex-1">${v.name}</span>
     </button>`).join('');
   root.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -620,17 +705,130 @@ function renderStatCards() {
   const meetings = get(CACHE.PARTNER_MOMS, []).filter(x => x.partner_id===p.id).length;
   const emails   = get(CACHE.PARTNER_EMAILS, []).filter(x => x.partner_id===p.id).length;
   const cards = [
-    { title:'Size of Business',   value:fmtMoney(p.size_value, p.size_unit, true) },
-    { title:'Volume of Business', value:fmtMoney(p.volume_value, p.volume_unit, false) },
-    { title:'Meetings Till Date', value:`${meetings}` },
-    { title:'Emails Till Date',   value:`${emails}` },
-    { title:'Captain',            value:`<span class="text-[18px]">${escapeHtml(p.captain || '—')}</span>` },
+    { key:'size',     title:'Size of Business',   value:fmtMoney(p.size_value, p.size_unit, true) },
+    { key:'volume',   title:'Volume of Business', value:fmtMoney(p.volume_value, p.volume_unit, false) },
+    { key:'meetings', title:'Meetings Till Date', value:`${meetings}` },
+    { key:'emails',   title:'Emails Till Date',   value:`${emails}` },
+    { key:'captain',  title:'Captain',            value:`<span class="text-[18px]">${escapeHtml(p.captain || '—')}</span>` },
   ];
   el.innerHTML = cards.map(c => `
-    <div class="stat-card">
+    <div class="stat-card cursor-pointer" data-card="${c.key}" title="View details">
       <div class="stat-title">${c.title}</div>
       <div class="stat-value mt-2">${c.value}</div>
     </div>`).join('');
+  el.querySelectorAll('[data-card]').forEach(c => c.onclick = () => openCardDetail(c.dataset.card));
+}
+
+function openCardDetail(key) {
+  const p = getActivePartner();
+  if (!p) return;
+  const fmt = (iso) => iso ? new Date(iso).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—';
+
+  if (key === 'size' || key === 'volume') {
+    const isSize = key === 'size';
+    const value = isSize ? p.size_value : p.volume_value;
+    const unit  = isSize ? p.size_unit  : p.volume_unit;
+    showModal(`
+      <div class="p-6">
+        <div class="text-[11px] tracking-[.16em] uppercase text-eb-muted font-semibold mb-1">${isSize?'Size':'Volume'} of Business</div>
+        <h3 class="font-display font-bold text-2xl text-eb-ink mb-1">${escapeHtml(p.name)}</h3>
+        <p class="text-eb-muted text-[13px] mb-5">${isSize?'Total business value with this partner.':'Operating volume committed against this partner.'}</p>
+        <div class="panel p-5 mb-5">
+          <div class="text-[11px] uppercase tracking-wide text-eb-muted font-semibold mb-2">${isSize?'Amount':'Volume'}</div>
+          <div class="font-display font-bold text-3xl text-eb-ink">${fmtMoney(value, unit, isSize)}</div>
+          <div class="text-[12px] text-eb-muted mt-1">Unit: ${UNIT_LABEL[unit] || '—'}</div>
+        </div>
+        <div class="flex justify-end gap-2">
+          <button class="btn-ghost" data-close>Close</button>
+          <button class="btn-primary" id="card-edit">Edit partner</button>
+        </div>
+      </div>`, 'lg');
+    document.getElementById('card-edit').onclick = () => { closeModal(); openPartnerModal(p); };
+    return;
+  }
+
+  if (key === 'captain') {
+    showModal(`
+      <div class="p-6">
+        <div class="text-[11px] tracking-[.16em] uppercase text-eb-muted font-semibold mb-1">Captain</div>
+        <h3 class="font-display font-bold text-2xl text-eb-ink mb-1">${escapeHtml(p.captain || '—')}</h3>
+        <p class="text-eb-muted text-[13px] mb-5">Account owner driving ${escapeHtml(p.name)} on our side.</p>
+        <div class="flex justify-end gap-2">
+          <button class="btn-ghost" data-close>Close</button>
+          <button class="btn-primary" id="card-edit">Edit partner</button>
+        </div>
+      </div>`);
+    document.getElementById('card-edit').onclick = () => { closeModal(); openPartnerModal(p); };
+    return;
+  }
+
+  if (key === 'meetings') {
+    const list = get(CACHE.PARTNER_MOMS, [])
+      .filter(x => x.partner_id===p.id)
+      .sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+    showModal(`
+      <div class="p-6">
+        <div class="text-[11px] tracking-[.16em] uppercase text-eb-muted font-semibold mb-1">Meetings — ${list.length}</div>
+        <h3 class="font-display font-bold text-2xl text-eb-ink mb-4">${escapeHtml(p.name)}</h3>
+        ${list.length ? `
+          <div class="space-y-2 max-h-[60vh] overflow-y-auto nice-scroll pr-1">
+            ${list.map(m => {
+              const items = parseActionItems(m.action_items);
+              return `
+              <div class="border border-eb-line rounded-lg p-3">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="font-semibold text-eb-ink">${escapeHtml(m.heading || '(untitled)')}</div>
+                  <div class="text-[11px] text-eb-muted">${fmt(m.date)}</div>
+                </div>
+                ${m.attendees ? `<div class="text-[12px] text-eb-muted mb-1">Attendees: ${escapeHtml(m.attendees)}</div>` : ''}
+                ${m.agenda ? `<div class="text-[13px] mb-1"><b>Agenda:</b> ${escapeHtml(m.agenda)}</div>` : ''}
+                ${m.notes ? `<div class="text-[13px] whitespace-pre-wrap mb-1"><b>Notes:</b> ${escapeHtml(m.notes)}</div>` : ''}
+                ${items.length ? `<div class="text-[13px] mt-1"><b>Action items:</b><ul class="mt-1 ml-1">${items.map(a => `
+                  <li class="ai-row ${a.done?'done':''}">
+                    <span class="w-4 h-4 rounded border ${a.done?'bg-eb-blue border-eb-blue':'border-eb-line'}"></span>
+                    <span class="ai-text">${escapeHtml(a.text)}</span>
+                    ${a.assignee ? `<span class="ai-assignee">${escapeHtml(a.assignee)}</span>` : ''}
+                  </li>`).join('')}</ul></div>` : ''}
+              </div>`;
+            }).join('')}
+          </div>` : `<div class="empty">No meetings logged yet.</div>`}
+        <div class="flex justify-end gap-2 mt-5">
+          <button class="btn-ghost" data-close>Close</button>
+          <button class="btn-primary" id="card-add">Log meeting</button>
+        </div>
+      </div>`, 'xl');
+    document.getElementById('card-add').onclick = () => { closeModal(); openMoMModal(); };
+    return;
+  }
+
+  if (key === 'emails') {
+    const list = get(CACHE.PARTNER_EMAILS, [])
+      .filter(x => x.partner_id===p.id)
+      .sort((a,b)=> (b.date||'').localeCompare(a.date||''));
+    showModal(`
+      <div class="p-6">
+        <div class="text-[11px] tracking-[.16em] uppercase text-eb-muted font-semibold mb-1">Emails — ${list.length}</div>
+        <h3 class="font-display font-bold text-2xl text-eb-ink mb-4">${escapeHtml(p.name)}</h3>
+        ${list.length ? `
+          <div class="space-y-2 max-h-[60vh] overflow-y-auto nice-scroll pr-1">
+            ${list.map(e => `
+              <div class="border border-eb-line rounded-lg p-3">
+                <div class="flex items-center justify-between mb-1">
+                  <div class="font-semibold text-eb-ink">${escapeHtml(e.subject || '(no subject)')}</div>
+                  <div class="text-[11px] text-eb-muted">${fmt(e.date)}</div>
+                </div>
+                <div class="text-[12px] text-eb-muted mb-1">From: ${escapeHtml(e.from_||'—')} · To: ${escapeHtml(e.to_||'—')}</div>
+                ${e.body ? `<div class="text-[13px] whitespace-pre-wrap">${escapeHtml(e.body)}</div>` : ''}
+              </div>`).join('')}
+          </div>` : `<div class="empty">No emails logged yet.</div>`}
+        <div class="flex justify-end gap-2 mt-5">
+          <button class="btn-ghost" data-close>Close</button>
+          <button class="btn-primary" id="card-add">Log email</button>
+        </div>
+      </div>`, 'xl');
+    document.getElementById('card-add').onclick = () => { closeModal(); openEmailModal(); };
+    return;
+  }
 }
 
 function renderSpoc() {
@@ -721,6 +919,20 @@ function renderMoMs() {
     .filter(x => x.partner_id===p.id)
     .sort((a,b)=> (b.date||'').localeCompare(a.date||''));
   if (!list.length) { el.innerHTML = `<div class="empty m-2">No MoMs logged yet.</div>`; return; }
+  const renderActionList = (items, momId) => {
+    if (!items?.length) return '';
+    return `
+      <div class="mb-1"><b>Action items:</b></div>
+      <div class="mb-1">
+        ${items.map((a,i) => `
+          <label class="ai-row ${a.done?'done':''}">
+            <input type="checkbox" data-mom-ai="${momId}" data-ai-idx="${i}" ${a.done?'checked':''} />
+            <span class="ai-text">${escapeHtml(a.text||'')}</span>
+            ${a.assignee ? `<span class="ai-assignee">${escapeHtml(a.assignee)}</span>` : ''}
+          </label>`).join('')}
+      </div>`;
+  };
+
   el.innerHTML = list.map(m => `
     <div>
       <div class="comm-row" data-toggle="${m.id}">
@@ -731,8 +943,9 @@ function renderMoMs() {
         <div class="text-[11px] text-eb-muted mb-1">Attendees: ${escapeHtml(m.attendees||'—')}</div>
         ${m.agenda ? `<div class="mb-1"><b>Agenda:</b> ${escapeHtml(m.agenda)}</div>` : ''}
         ${m.notes  ? `<div class="mb-1 whitespace-pre-wrap"><b>Notes:</b> ${escapeHtml(m.notes)}</div>` : ''}
-        ${m.action_items ? `<div class="mb-1 whitespace-pre-wrap"><b>Action items:</b> ${escapeHtml(m.action_items)}</div>` : ''}
+        ${renderActionList(m.action_items, m.id)}
         <div class="mt-2 flex justify-end gap-2">
+          <button class="btn-ghost" data-edit-mom="${m.id}" style="font-size:11px; padding:4px 8px;">Edit</button>
           <button class="btn-ghost" data-del-mom="${m.id}" style="font-size:11px; padding:4px 8px;">Delete</button>
         </div>
       </div>
@@ -750,6 +963,76 @@ function renderMoMs() {
       renderMoMs(); renderStatCards(); toast('MoM deleted');
     });
   });
+  el.querySelectorAll('[data-edit-mom]').forEach(b => b.onclick = (ev) => {
+    ev.stopPropagation();
+    const m = get(CACHE.PARTNER_MOMS, []).find(x => x.id === b.dataset.editMom);
+    if (m) openMoMModal(m);
+  });
+  // Toggle individual action item done-state directly from the detail view.
+  el.querySelectorAll('[data-mom-ai]').forEach(cb => {
+    cb.addEventListener('click', e => e.stopPropagation());
+    cb.onchange = async () => {
+      const momId = cb.dataset.momAi;
+      const idx = +cb.dataset.aiIdx;
+      const moms = get(CACHE.PARTNER_MOMS, []);
+      const m = moms.find(x => x.id === momId);
+      if (!m) return;
+      const items = parseActionItems(m.action_items);
+      if (!items[idx]) return;
+      items[idx].done = cb.checked;
+      const { error } = await sb.from('partner_moms').update({ action_items: items }).eq('id', momId);
+      if (error) { cb.checked = !cb.checked; return toast('Update failed: ' + error.message, 'danger'); }
+      m.action_items = items;
+      set(CACHE.PARTNER_MOMS, moms);
+      cb.closest('.ai-row').classList.toggle('done', cb.checked);
+    };
+  });
+}
+
+/* ============================================================
+ *  DOCUMENTS — every attachment that exists for this partner
+ * ============================================================ */
+function renderDocuments() {
+  const p = getActivePartner();
+  const listEl = document.getElementById('doc-list');
+  const countEl = document.getElementById('doc-count');
+  if (!p) {
+    countEl.textContent = '';
+    listEl.innerHTML = `<div class="empty col-span-full">Select a partner to see documents.</div>`;
+    return;
+  }
+  // Pull every task with an attachment for this partner. Source-of-truth is
+  // the partner_tasks rows; the file itself lives in the storage bucket.
+  const docs = get(CACHE.PARTNER_TASKS, [])
+    .filter(t => t.partner_id === p.id && t.attachment_path && t.attachment_name)
+    .map(t => ({
+      id: t.id, name: t.attachment_name, path: t.attachment_path,
+      task: t.title, end_date: t.end_date,
+    }))
+    .sort((a,b) => (b.end_date||'').localeCompare(a.end_date||''));
+
+  countEl.textContent = docs.length ? `${docs.length} file${docs.length===1?'':'s'}` : '';
+  if (!docs.length) {
+    listEl.innerHTML = `<div class="empty col-span-full">No documents uploaded for ${escapeHtml(p.name)} yet. Attach files when creating to-dos.</div>`;
+    return;
+  }
+  listEl.innerHTML = docs.map(d => {
+    const url = attachmentUrl(d.path);
+    const ext = (d.name.split('.').pop() || '').toLowerCase();
+    return `
+      <div class="doc-row">
+        <div class="doc-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="text-[13px] font-semibold text-eb-ink truncate" title="${escapeHtml(d.name)}">${escapeHtml(d.name)}</div>
+          <div class="text-[11px] text-eb-muted truncate">${escapeHtml(ext.toUpperCase() || 'FILE')} · ${escapeHtml(d.task)}</div>
+        </div>
+        <a class="btn-icon" href="${url}" download="${escapeHtml(d.name)}" target="_blank" rel="noopener" title="Download ${escapeHtml(d.name)}">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        </a>
+      </div>`;
+  }).join('');
 }
 
 /* ============================================================
@@ -1038,7 +1321,7 @@ function openTaskModal(existing=null) {
         const { error } = await sb.from('partner_tasks').delete().eq('id', existing.id);
         if (error) return toast('Delete failed: ' + error.message, 'danger');
         await loadFromSupabase();
-        closeModal(); renderTasks(); toast('Task deleted');
+        closeModal(); renderTasks(); renderDocuments(); toast('Task deleted');
       });
     };
   }
@@ -1080,7 +1363,7 @@ function openTaskModal(existing=null) {
     }
     if (error) return toast('Save failed: ' + error.message, 'danger');
     await loadFromSupabase();
-    closeModal(); renderTasks();
+    closeModal(); renderTasks(); renderDocuments();
     toast(existing ? 'Task updated' : 'Task added');
   };
 }
@@ -1157,42 +1440,93 @@ function openEmailModal() {
   };
 }
 
-function openMoMModal() {
+function openMoMModal(existing=null) {
   const p = getActivePartner();
   if (!p) return toast('Add a partner first', 'warn');
+  const m = existing || { date: todayISO(), action_items: [] };
+  const initialItems = parseActionItems(m.action_items);
   showModal(`
     <div class="p-6">
-      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Log meeting (MoM)</h3>
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">${existing?'Edit':'Log'} meeting (MoM)</h3>
       <p class="text-eb-muted text-[13px] mb-5">For <b class="text-eb-ink">${escapeHtml(p.name)}</b>.</p>
       <div class="grid grid-cols-2 gap-4">
-        <div><label class="lbl">Date</label><input id="m-date" type="date" class="input" value="${todayISO()}" /></div>
-        <div><label class="lbl">Heading</label><input id="m-heading" class="input" placeholder="e.g. Kickoff meeting" /></div>
-        <div class="col-span-2"><label class="lbl">Attendees</label><input id="m-attendees" class="input" placeholder="Comma-separated names" /></div>
-        <div class="col-span-2"><label class="lbl">Agenda</label><input id="m-agenda" class="input" placeholder="What was the meeting about?" /></div>
-        <div class="col-span-2"><label class="lbl">Notes</label><textarea id="m-notes" class="input" rows="4" placeholder="Discussion notes"></textarea></div>
-        <div class="col-span-2"><label class="lbl">Action items</label><textarea id="m-actions" class="input" rows="3" placeholder="Who does what by when"></textarea></div>
+        <div><label class="lbl">Date</label><input id="m-date" type="date" class="input" value="${escapeHtml(m.date||todayISO())}" /></div>
+        <div><label class="lbl">Heading</label><input id="m-heading" class="input" placeholder="e.g. Kickoff meeting" value="${escapeHtml(m.heading||'')}" /></div>
+        <div class="col-span-2"><label class="lbl">Attendees</label><input id="m-attendees" class="input" placeholder="Comma-separated names" value="${escapeHtml(m.attendees||'')}" /></div>
+        <div class="col-span-2"><label class="lbl">Agenda</label><input id="m-agenda" class="input" placeholder="What was the meeting about?" value="${escapeHtml(m.agenda||'')}" /></div>
+        <div class="col-span-2"><label class="lbl">Notes</label><textarea id="m-notes" class="input" rows="4" placeholder="Discussion notes">${escapeHtml(m.notes||'')}</textarea></div>
+        <div class="col-span-2">
+          <label class="lbl">Action items (checklist)</label>
+          <p class="text-[11px] text-eb-muted mb-2">Add as many items as needed. Tick to mark complete; assign each to a teammate.</p>
+          <div id="m-actions-list"></div>
+          <button class="btn-ghost mt-1" id="m-add-action"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Add action item</button>
+        </div>
       </div>
-      <div class="flex justify-end gap-2 mt-6">
-        <button class="btn-ghost" data-close>Cancel</button>
-        <button class="btn-primary" id="m-save">Save</button>
+      <div class="flex justify-${existing?'between':'end'} gap-2 mt-6">
+        ${existing ? `<button class="btn-ghost" id="m-delete" style="color:#EF4444; border-color:rgba(239,68,68,.30);">Delete</button>` : ''}
+        <div class="flex gap-2">
+          <button class="btn-ghost" data-close>Cancel</button>
+          <button class="btn-primary" id="m-save">${existing?'Save':'Save'}</button>
+        </div>
       </div>
     </div>`, 'lg');
+
+  const aiHost = document.getElementById('m-actions-list');
+  const renderActions = (arr) => {
+    aiHost.innerHTML = (arr.length ? arr : [{text:'', assignee:'', done:false}]).map((a,i) => `
+      <div class="multi-row" data-ai-idx="${i}">
+        <input type="checkbox" class="m-ai-done" ${a.done?'checked':''} title="Mark done" />
+        <input class="input m-ai-text" placeholder="Action item" value="${escapeHtml(a.text||'')}" />
+        <input class="input m-ai-assignee" placeholder="Assign to..." value="${escapeHtml(a.assignee||'')}" style="max-width:160px;" />
+        <button class="chip-rm" data-rm-ai="${i}" title="Remove"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+      </div>`).join('');
+    aiHost.querySelectorAll('[data-rm-ai]').forEach(b => b.onclick = () => {
+      const idx = +b.dataset.rmAi; const cur = collectActions(); cur.splice(idx,1); renderActions(cur);
+    });
+  };
+  const collectActions = () => [...aiHost.querySelectorAll('.multi-row')].map(row => ({
+    text:     row.querySelector('.m-ai-text').value.trim(),
+    assignee: row.querySelector('.m-ai-assignee').value.trim(),
+    done:     row.querySelector('.m-ai-done').checked,
+  }));
+  renderActions(initialItems.length ? initialItems.slice() : []);
+  document.getElementById('m-add-action').onclick = () => {
+    const cur = collectActions(); cur.push({text:'',assignee:'',done:false}); renderActions(cur);
+  };
+
+  if (existing) {
+    document.getElementById('m-delete').onclick = () => {
+      confirmDelete('Delete this meeting log entry?', async () => {
+        const { error } = await sb.from('partner_moms').delete().eq('id', existing.id);
+        if (error) return toast('Delete failed: ' + error.message, 'danger');
+        await loadFromSupabase();
+        closeModal(); renderMoMs(); renderStatCards(); toast('MoM deleted');
+      });
+    };
+  }
+
   document.getElementById('m-save').onclick = async () => {
     const heading = document.getElementById('m-heading').value.trim();
     if (!heading) return toast('Heading is required', 'warn');
-    const { error } = await sb.from('partner_moms').insert({
+    const dbPayload = {
       partner_id: p.id,
       date: document.getElementById('m-date').value || null,
       heading,
       attendees:    document.getElementById('m-attendees').value.trim() || null,
       agenda:       document.getElementById('m-agenda').value.trim()    || null,
       notes:        document.getElementById('m-notes').value.trim()     || null,
-      action_items: document.getElementById('m-actions').value.trim()   || null,
-    });
+      action_items: collectActions().filter(a => a.text),
+    };
+    let error;
+    if (existing) {
+      ({ error } = await sb.from('partner_moms').update(dbPayload).eq('id', existing.id));
+    } else {
+      ({ error } = await sb.from('partner_moms').insert(dbPayload));
+    }
     if (error) return toast('Save failed: ' + error.message, 'danger');
     await loadFromSupabase();
     closeModal(); renderMoMs(); renderStatCards();
-    toast('Meeting logged');
+    toast(existing ? 'Meeting updated' : 'Meeting logged');
   };
 }
 
@@ -1241,7 +1575,20 @@ function renderAll() {
   renderTasks();
   renderEmails();
   renderMoMs();
+  renderDocuments();
 }
+
+// Sidebar collapse — persist state
+function applySidebarState() {
+  const collapsed = !!get(CACHE.SIDEBAR_COLLAPSED, false);
+  document.getElementById('sidebar').classList.toggle('collapsed', collapsed);
+}
+document.getElementById('sidebar-toggle').onclick = () => {
+  const cur = !!get(CACHE.SIDEBAR_COLLAPSED, false);
+  set(CACHE.SIDEBAR_COLLAPSED, !cur);
+  applySidebarState();
+};
+applySidebarState();
 
 document.getElementById('add-partner-btn').onclick = () => openPartnerModal();
 document.getElementById('add-task-btn').onclick    = () => openTaskModal();
