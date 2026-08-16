@@ -1,0 +1,14 @@
+/* Base reset before the app mounts. The app injects its full theme (light/dark
+   CSS variables, fonts, component styles) at runtime via a <style> block, so
+   this file is intentionally minimal — it only prevents a first-paint flash. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #f8fafc;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}

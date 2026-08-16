@@ -1,0 +1,1382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Command Center — Saurav</title>
+<meta name="description" content="Unified productivity & workflow command center" />
+
+<!-- Tailwind CDN (fine for a static site; swap for a build step when you scale) -->
+<script src="https://cdn.tailwindcss.com"></script>
+
+<!-- SheetJS for Excel parsing (team-member upload) -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
+<!-- Supabase client — pulls partner_tasks into the dashboard To-Do -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- Inter for body, Space Grotesk for display — Elecbits-aligned, modern, technical -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+
+<script>
+  // Tailwind theme — Elecbits palette: deep navy + electric blue accent on near-white
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          eb: {
+            ink:    '#0A1628', // deep navy (primary text / sidebar)
+            ink2:   '#142540', // navy-2 (cards on dark)
+            blue:   '#1E6BFF', // electric blue accent
+            blueHi: '#4A8BFF', // hover/lighter accent
+            blueLo: '#0E4FCC', // pressed
+            cyan:   '#00C2FF', // accent secondary (subtle highlights)
+            paper:  '#F7F9FC', // page background
+            paper2: '#EEF2F8', // subtle panel
+            line:   '#E2E8F2', // hairlines
+            muted:  '#5A6B85', // secondary text
+            ok:     '#10B981',
+            warn:   '#F59E0B',
+            danger: '#EF4444',
+          }
+        },
+        fontFamily: {
+          sans:    ['Inter', 'system-ui', 'sans-serif'],
+          display: ['"Space Grotesk"', 'Inter', 'sans-serif'],
+        },
+        boxShadow: {
+          card:  '0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05)',
+          cardH: '0 2px 4px rgba(10,22,40,.06), 0 12px 28px rgba(10,22,40,.10)',
+        }
+      }
+    }
+  };
+</script>
+
+<style>
+  html, body { background: #F7F9FC; }
+  body { font-family: 'Inter', system-ui, sans-serif; color: #0A1628; }
+  .font-display { font-family: 'Space Grotesk', Inter, sans-serif; letter-spacing: -0.01em; }
+
+  /* Subtle dotted texture on background — adds depth without noise */
+  body::before {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image: radial-gradient(circle at 1px 1px, rgba(10,22,40,.05) 1px, transparent 0);
+    background-size: 24px 24px;
+    opacity: .5;
+  }
+  #app { position: relative; z-index: 1; }
+
+  /* Sidebar nav button — clean, technical, hover slides accent */
+  .nav-btn {
+    position: relative; display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px; border-radius: 10px;
+    background: transparent; color: #CBD5E1;
+    transition: all .18s ease; cursor: pointer;
+    border: 1px solid transparent;
+    font-weight: 500; font-size: 14px;
+    width: 100%; text-align: left;
+  }
+  .nav-btn:hover { background: rgba(30,107,255,.10); color: #fff; border-color: rgba(30,107,255,.25); }
+  .nav-btn:hover .nav-icon { color: #4A8BFF; }
+  .nav-btn::before {
+    content: ''; position: absolute; left: 0; top: 25%; bottom: 25%; width: 3px;
+    background: #1E6BFF; border-radius: 0 2px 2px 0;
+    transform: scaleY(0); transition: transform .18s ease; transform-origin: center;
+  }
+  .nav-btn:hover::before { transform: scaleY(1); }
+  .nav-icon { color: #64748B; transition: color .18s ease; flex-shrink: 0; }
+
+  /* Card base */
+  .panel {
+    background: #fff; border: 1px solid #E2E8F2; border-radius: 14px;
+    box-shadow: 0 1px 2px rgba(10,22,40,.04), 0 4px 12px rgba(10,22,40,.05);
+  }
+
+  /* Countdown card */
+  .cd-card {
+    background: linear-gradient(135deg, #fff 0%, #F7F9FC 100%);
+    border: 1px solid #E2E8F2; border-radius: 12px;
+    padding: 14px; position: relative; overflow: hidden;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .cd-card:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(10,22,40,.08); }
+  .cd-card::after {
+    content: ''; position: absolute; top: 0; right: 0; width: 60px; height: 60px;
+    background: radial-gradient(circle at top right, rgba(30,107,255,.10), transparent 70%);
+    pointer-events: none;
+  }
+  .cd-num { font-family: 'Space Grotesk'; font-weight: 700; font-size: 38px; line-height: 1; color: #0A1628; letter-spacing: -.02em; }
+  .cd-num.urgent { color: #EF4444; }
+  .cd-num.soon   { color: #F59E0B; }
+
+  /* Meeting card */
+  .meet-card {
+    background: #fff; border: 1px solid #E2E8F2; border-left: 3px solid #1E6BFF;
+    border-radius: 8px; padding: 10px 12px;
+    transition: all .15s ease;
+  }
+  .meet-card:hover { border-color: #1E6BFF; box-shadow: 0 4px 12px rgba(30,107,255,.10); }
+
+  /* Task row */
+  .task-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-bottom: 1px solid #EEF2F8;
+    transition: background .12s ease; cursor: pointer;
+  }
+  .task-row:hover { background: #F7F9FC; }
+  .task-row:last-child { border-bottom: none; }
+  .task-row.resolved { background: #FAFBFC; opacity: .55; }
+  .task-row.resolved .task-title { text-decoration: line-through; color: #5A6B85; }
+  .task-row.resolved .dot { background: #CBD5E1 !important; }
+
+  /* Resolve toggle (round check) */
+  .btn-resolve {
+    width: 26px; height: 26px; flex-shrink: 0;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; border: 1.5px solid #CBD5E1; background: #fff;
+    color: #5A6B85; transition: all .15s ease; cursor: pointer;
+  }
+  .btn-resolve:hover { border-color: #10B981; color: #10B981; background: rgba(16,185,129,.08); }
+  .btn-resolve.is-resolved { background: #10B981; border-color: #10B981; color: #fff; }
+  .btn-resolve.is-resolved:hover { background: #0E9E73; border-color: #0E9E73; color: #fff; }
+
+  /* Buttons */
+  .btn-primary {
+    background: #1E6BFF; color: #fff; padding: 8px 14px; border-radius: 8px;
+    font-weight: 500; font-size: 13px; transition: all .15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary:hover { background: #0E4FCC; transform: translateY(-1px); box-shadow: 0 4px 10px rgba(30,107,255,.30); }
+  .btn-ghost {
+    background: transparent; color: #0A1628; padding: 6px 12px; border: 1px solid #E2E8F2;
+    border-radius: 8px; font-weight: 500; font-size: 13px; transition: all .15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-ghost:hover { border-color: #1E6BFF; color: #1E6BFF; background: rgba(30,107,255,.04); }
+  .btn-icon {
+    width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; border: 1px solid #E2E8F2; background: #fff;
+    transition: all .15s ease; cursor: pointer;
+  }
+  .btn-icon:hover { border-color: #1E6BFF; color: #1E6BFF; }
+
+  /* Inputs */
+  .input {
+    width: 100%; padding: 10px 12px; border: 1px solid #E2E8F2; border-radius: 8px;
+    background: #fff; font-size: 14px; color: #0A1628; transition: border-color .15s ease, box-shadow .15s ease;
+  }
+  .input:focus { outline: none; border-color: #1E6BFF; box-shadow: 0 0 0 3px rgba(30,107,255,.12); }
+  label.lbl { display: block; font-size: 12px; font-weight: 600; color: #5A6B85; margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+
+  /* Modal */
+  .modal-back {
+    position: fixed; inset: 0; background: rgba(10,22,40,.55); z-index: 50;
+    display: flex; align-items: center; justify-content: center; padding: 16px;
+    backdrop-filter: blur(4px); animation: fadeIn .15s ease;
+  }
+  .modal-card {
+    background: #fff; border-radius: 16px; width: 100%; max-width: 520px;
+    box-shadow: 0 20px 60px rgba(10,22,40,.30); animation: pop .18s ease;
+    max-height: 90vh; overflow-y: auto;
+  }
+  .modal-card.lg { max-width: 720px; }
+  @keyframes fadeIn { from {opacity:0} to {opacity:1} }
+  @keyframes pop   { from {opacity:0; transform: translateY(8px) scale(.98)} to {opacity:1; transform: translateY(0) scale(1)} }
+
+  /* Date filter pill */
+  .date-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(30,107,255,.10); color: #0E4FCC;
+    padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  }
+  .date-pill button { color: #0E4FCC; opacity: .7; }
+  .date-pill button:hover { opacity: 1; }
+
+  /* Status dot */
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* Scroll bars in panels */
+  .nice-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+  .nice-scroll::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
+  .nice-scroll::-webkit-scrollbar-track { background: transparent; }
+
+  /* Subtle entrance animation */
+  .fade-up { opacity: 0; transform: translateY(8px); animation: fadeUp .5s ease forwards; }
+  @keyframes fadeUp { to { opacity: 1; transform: translateY(0); } }
+
+  /* Empty state */
+  .empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 24px 16px; color: #5A6B85; text-align: center; font-size: 13px;
+    border: 1px dashed #CBD5E1; border-radius: 10px; background: #F7F9FC;
+  }
+
+  /* Multi-date calendar (To-Do filter) */
+  .cal-pop {
+    position: absolute; z-index: 40; top: calc(100% + 6px); right: 0;
+    width: 300px; background: #fff; border: 1px solid #E2E8F2; border-radius: 12px;
+    box-shadow: 0 12px 28px rgba(10,22,40,.12); padding: 12px;
+    animation: pop .15s ease;
+  }
+  .cal-range { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #EEF2F8; }
+  .cal-range label { font-size: 10px; font-weight: 600; color: #5A6B85; text-transform: uppercase; letter-spacing: .04em; display: block; margin-bottom: 3px; }
+  .cal-range input { width: 100%; padding: 5px 7px; font-size: 12px; border: 1px solid #E2E8F2; border-radius: 6px; color: #0A1628; }
+  .cal-range input:focus { outline: none; border-color: #1E6BFF; box-shadow: 0 0 0 2px rgba(30,107,255,.15); }
+  .cal-day.in-range { background: rgba(30,107,255,.12); color: #0E4FCC; border-radius: 0; }
+  .cal-day.in-range:hover { background: rgba(30,107,255,.20); }
+  .cal-day.range-start { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+  .cal-day.range-end   { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+  .cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .cal-title { font-family: 'Space Grotesk'; font-weight: 600; font-size: 14px; color: #0A1628; }
+  .cal-nav { width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center;
+             border-radius: 6px; color: #5A6B85; cursor: pointer; transition: all .12s ease; }
+  .cal-nav:hover { background: #EEF2F8; color: #0A1628; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+  .cal-dow { font-size: 10px; font-weight: 600; color: #5A6B85; text-align: center; padding: 4px 0; text-transform: uppercase; letter-spacing: .04em; }
+  .cal-day {
+    aspect-ratio: 1 / 1; display: flex; align-items: center; justify-content: center;
+    font-size: 12px; color: #0A1628; border-radius: 6px; cursor: pointer;
+    transition: all .12s ease; user-select: none;
+  }
+  .cal-day:hover { background: #EEF2F8; }
+  .cal-day.muted { color: #CBD5E1; }
+  .cal-day.today { box-shadow: inset 0 0 0 1px #1E6BFF; font-weight: 600; }
+  .cal-day.selected { background: #1E6BFF; color: #fff; font-weight: 600; }
+  .cal-day.selected:hover { background: #0E4FCC; }
+  .cal-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px solid #EEF2F8; }
+  .cal-foot button { font-size: 12px; color: #5A6B85; }
+  .cal-foot button:hover { color: #1E6BFF; }
+</style>
+</head>
+<body class="min-h-screen">
+
+<div id="app" class="min-h-screen flex">
+
+  <!-- ============== SIDEBAR (1/4 of viewport) ============== -->
+  <aside class="w-[22rem] min-h-screen bg-eb-ink text-white flex flex-col" style="background: linear-gradient(180deg, #0A1628 0%, #142540 100%);">
+    <!-- Brand -->
+    <div class="px-6 pt-7 pb-6 border-b border-white/5">
+      <div class="flex items-center gap-3">
+        <!-- Logo mark — abstract circuit/grid pattern in accent blue -->
+        <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: linear-gradient(135deg, #1E6BFF, #00C2FF);">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/>
+            <rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>
+          </svg>
+        </div>
+        <div>
+          <div class="font-display font-bold text-lg leading-none">Command</div>
+          <div class="font-display text-eb-blueHi text-[11px] tracking-[.18em] uppercase mt-1">Center · v1</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Nav -->
+    <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto nice-scroll">
+      <div class="px-3 pb-2 text-[11px] tracking-[.18em] uppercase text-white/40 font-semibold">Verticals</div>
+      <!-- 9 boxes injected by JS so we can attach handlers + later make them route -->
+      <div id="vertical-nav"></div>
+    </nav>
+
+    <!-- Footer of sidebar -->
+    <div class="px-5 py-4 border-t border-white/5 flex items-center justify-between text-[12px] text-white/50">
+      <div class="flex items-center gap-2"><span class="dot bg-eb-ok"></span> All systems online</div>
+      <button id="settings-btn" class="hover:text-white transition" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ============== MAIN (3/4) ============== -->
+  <main class="flex-1 min-h-screen flex flex-col">
+
+    <!-- Top welcome bar -->
+    <header class="px-8 pt-7 pb-5 flex items-end justify-between gap-6 fade-up">
+      <div>
+        <div class="text-eb-muted text-[12px] tracking-[.18em] uppercase font-semibold mb-2" id="today-date"></div>
+        <h1 class="font-display text-4xl font-bold text-eb-ink leading-tight">
+          Welcome, <span style="background: linear-gradient(90deg, #1E6BFF, #00C2FF); -webkit-background-clip: text; background-clip: text; color: transparent;">Saurav</span>!
+        </h1>
+        <p class="text-eb-muted mt-1 text-[14px]">Here's everything you need today, in one place.</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <button class="btn-ghost" id="search-btn" title="Search across the tool">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          Search
+          <kbd class="ml-1 text-[10px] bg-eb-paper2 border border-eb-line px-1.5 py-0.5 rounded">⌘K</kbd>
+        </button>
+        <div class="w-9 h-9 rounded-full flex items-center justify-center text-white font-semibold text-sm" style="background: linear-gradient(135deg,#1E6BFF,#0A1628);">S</div>
+      </div>
+    </header>
+
+    <!-- Grid: top row (countdowns + meetings), bottom row (todo + assigned) -->
+    <div class="px-8 pb-8 grid grid-cols-2 gap-5 flex-1">
+
+      <!-- Countdowns -->
+      <section class="panel p-5 fade-up" style="animation-delay:.05s">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">Countdowns</h2>
+            <p class="text-[12px] text-eb-muted">Live timers to your key milestones</p>
+          </div>
+          <button class="btn-primary" id="add-countdown-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            Add
+          </button>
+        </div>
+        <div id="countdown-list" class="grid grid-cols-1 gap-3"></div>
+      </section>
+
+      <!-- Upcoming Meetings -->
+      <section class="panel p-5 fade-up" style="animation-delay:.1s">
+        <div class="flex items-center justify-between mb-4">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">Upcoming Meetings</h2>
+            <p class="text-[12px] text-eb-muted">Synced from Google Calendar</p>
+          </div>
+          <button class="btn-ghost" id="connect-calendar-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span id="calendar-status">Connect Calendar</span>
+          </button>
+        </div>
+        <div id="meeting-list" class="space-y-2 max-h-[260px] overflow-y-auto nice-scroll pr-1"></div>
+      </section>
+
+      <!-- To-Do -->
+      <section class="panel p-5 fade-up col-span-1" style="animation-delay:.15s">
+        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">To-Do</h2>
+            <p class="text-[12px] text-eb-muted">Tasks assigned to you, across every vertical</p>
+          </div>
+          <div class="flex items-center gap-2 relative">
+            <button class="btn-ghost" id="todo-cal-toggle">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              <span id="todo-cal-label">Filter dates</span>
+            </button>
+            <button class="btn-icon" id="todo-clear-dates" title="Clear filters">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+            <div id="todo-cal-pop" class="cal-pop hidden"></div>
+          </div>
+        </div>
+        <div id="todo-date-pills" class="flex flex-wrap gap-1.5 mb-3"></div>
+        <div id="todo-list" class="border border-eb-line rounded-lg overflow-hidden max-h-[300px] overflow-y-auto nice-scroll"></div>
+      </section>
+
+      <!-- Tasks Assigned -->
+      <section class="panel p-5 fade-up col-span-1" style="animation-delay:.2s">
+        <div class="flex items-center justify-between mb-3 gap-3 flex-wrap">
+          <div>
+            <h2 class="font-display font-bold text-lg text-eb-ink">Tasks Assigned</h2>
+            <p class="text-[12px] text-eb-muted">Track what your team owes you</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="assignee-filter" class="input !py-1.5 !px-2 !text-[13px] !w-auto"><option value="">All people</option></select>
+            <button class="btn-ghost" id="upload-team-btn">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              Upload Team
+            </button>
+          </div>
+        </div>
+        <div id="assigned-list" class="border border-eb-line rounded-lg overflow-hidden max-h-[300px] overflow-y-auto nice-scroll"></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- Hidden file input for excel team upload -->
+<input type="file" id="team-file-input" accept=".xlsx,.xls,.csv" style="display:none" />
+
+<!-- Modal mount point -->
+<div id="modal-root"></div>
+
+<script>
+/* ============================================================
+ *  STATE — single source of truth, persisted to localStorage
+ *  All other vertical pages will read/write to these same keys,
+ *  so the landing page automatically aggregates work from across
+ *  the whole tool.
+ * ============================================================ */
+const STORE = {
+  COUNTDOWNS: 'cc_countdowns_v1',
+  MEETINGS:   'cc_meetings_v1',
+  TASKS:      'cc_tasks_v1',         // unified task pool (used by all 9 verticals)
+  TEAM:       'cc_team_v1',          // [{name,email}]
+  COMM_LOG:   'cc_comm_log_v1',      // [{taskId, to, subject, body, ts, direction}]
+  CAL_TOKEN:  'cc_gcal_token_v1',    // future Google OAuth token
+  USER:       'cc_user_v1',
+  PARTNER_TASKS:    'cc_partner_tasks_v1',   // mirror of Supabase partner_tasks
+  PARTNERS:         'cc_partners_v1',        // mirror of Supabase partners
+};
+const CURRENT_USER = 'Saurav'; // assignment-match name (case-insensitive)
+
+/* Supabase — same project as Partnership & Sales page so the dashboard
+   To-Do can surface partner_tasks assigned to the current user. */
+const SUPABASE_URL = 'https://ogfonkaeucojbqutrorc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9nZm9ua2FldWNvamJxdXRyb3JjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcyNzY4MzQsImV4cCI6MjA5Mjg1MjgzNH0.FeXwxD3RBE_2sYYAjsGQ6op06gcOh_F00FilGO87U2w';
+const sb = window.supabase ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+
+const get = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
+const set = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const uid = () => 'id_' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+
+/* Seed sample data the FIRST time so the page never feels dead.
+   In production replace with real data feeds. */
+function seedIfEmpty() {
+  if (!localStorage.getItem(STORE.COUNTDOWNS)) {
+    set(STORE.COUNTDOWNS, [
+      { id: uid(), name: 'Series-A Closure', unit: 'Days', date: addDays(45) },
+      { id: uid(), name: 'Bosch Delivery',   unit: 'Days', date: addDays(12) },
+      { id: uid(), name: 'Board Meeting',    unit: 'Days', date: addDays(3)  },
+    ]);
+  }
+  if (!localStorage.getItem(STORE.MEETINGS)) {
+    set(STORE.MEETINGS, [
+    
+      { id: uid(), date: addDays(0),  name: 'Investor sync — Sequoia',   link: 'https://meet.google.com/abc-defg-hij', location: '' },
+      { id: uid(), date: addDays(1),  name: 'Ops review — Gurugram',     link: '', location: 'STPI - 30, Electronic City Phase IV, Gurugram' },
+      { id: uid(), date: addDays(2),  name: 'Bosch supplier call',       link: 'https://meet.google.com/xyz-abcd-efg', location: '' },
+      { id: uid(), date: addDays(4),  name: '1:1 with Head of HR',       link: 'https://meet.google.com/hrb-ppp-qqq', location: '' },
+    ]);
+  }
+  if (!localStorage.getItem(STORE.TASKS)) {
+    set(STORE.TASKS, [
+      // tasks assigned TO Saurav (will show in To-Do)
+      { id: uid(), title: 'Approve Q3 finance plan', assignee: 'Saurav', vertical: 'Finance',
+        deadline: addDays(2), subtasks: ['Review CFO deck', 'Sign-off on burn projection'],
+        documents: [{name:'Q3-plan.pdf', url:'#'}], content: 'Final approval needed for board package.' },
+      { id: uid(), title: 'Review Bosch contract', assignee: 'Saurav', vertical: 'Partnership & Sales',
+        deadline: addDays(5), subtasks: ['Read MSA section 4', 'Compare with Maruti template'],
+        documents: [], content: 'Legal flagged 2 clauses — pricing and IP.' },
+      { id: uid(), title: 'Vision document v2', assignee: 'Saurav', vertical: 'Vision',
+        deadline: addDays(10), subtasks: ['Incorporate team feedback','Add 5-year roadmap'],
+        documents: [], content: '' },
+
+      // tasks Saurav has assigned to others (will show in Tasks Assigned)
+      { id: uid(), title: 'Vendor short-list for PCB',     assignee: 'Rohan Mehta',   vertical: 'Physical Infrastructure', deadline: addDays(7),  subtasks: [], documents: [], content: '' },
+      { id: uid(), title: 'Hiring plan: Embedded team',    assignee: 'Priya Iyer',    vertical: 'HRBP',                    deadline: addDays(14), subtasks: [], documents: [], content: '' },
+      { id: uid(), title: 'Investor data-room update',     assignee: 'Karan Shah',    vertical: 'Investment',              deadline: addDays(4),  subtasks: [], documents: [], content: '' },
+      { id: uid(), title: 'Automate weekly KPI report',    assignee: 'Rohan Mehta',   vertical: 'Automation',              deadline: addDays(9),  subtasks: [], documents: [], content: '' },
+    ]);
+  }
+  if (!localStorage.getItem(STORE.TEAM)) {
+    set(STORE.TEAM, [
+      { name: 'Rohan Mehta',  email: 'rohan@elecbits.in'  },
+      { name: 'Priya Iyer',   email: 'priya@elecbits.in'  },
+      { name: 'Karan Shah',   email: 'karan@elecbits.in'  },
+    ]);
+  }
+  if (!localStorage.getItem(STORE.COMM_LOG)) set(STORE.COMM_LOG, []);
+}
+function addDays(n) { const d = new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function fmtDDMM(iso) { const d = new Date(iso); return String(d.getDate()).padStart(2,'0')+'-'+String(d.getMonth()+1).padStart(2,'0'); }
+function daysUntil(iso) {
+  const t = new Date(); t.setHours(0,0,0,0);
+  const d = new Date(iso); d.setHours(0,0,0,0);
+  return Math.round((d - t) / 86400000);
+}
+function escapeHtml(s='') { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function todayISO() { return new Date().toISOString().slice(0,10); }
+function toast(msg, type='ok') {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.className = 'fixed bottom-6 right-6 px-4 py-3 rounded-lg text-white text-sm shadow-lg z-[100]';
+  t.style.background = type === 'ok' ? '#10B981' : type === 'warn' ? '#F59E0B' : '#EF4444';
+  t.style.animation = 'pop .2s ease';
+  document.body.appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(), 300); }, 2400);
+}
+
+/* ============================================================
+ *  VERTICAL NAV — 9 boxes
+ * ============================================================ */
+const VERTICALS = [
+  { key:'data-repository',         name:'Dashboard',              icon:'M21 8v13H3V8M1 3h22v5H1zM10 12h4' },
+  { key:'partnership-sales',       name:'Partnership & Sales',    icon:'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
+  { key:'investment',              name:'Investment',             icon:'M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6' },
+  { key:'automation',              name:'Automation',             icon:'M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83' },
+  { key:'execution',               name:'Execution',              icon:'M22 11.08V12a10 10 0 1 1-5.93-9.14M22 4 12 14.01l-3-3' },
+  { key:'physical-infrastructure', name:'Physical Infrastructure',icon:'M3 21h18M5 21V7l8-4v18M19 21V11l-6-4' },
+  { key:'finance',                 name:'Finance',                icon:'M3 3v18h18M7 14l4-4 4 4 6-6' },
+  { key:'hrbp',                    name:'HRBP',                   icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11h-6M19 8v6' },
+  { key:'vision',                  name:'Vision',                 icon:'M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z' },
+];
+function renderVerticalNav() {
+  const root = document.getElementById('vertical-nav');
+  root.innerHTML = VERTICALS.map((v, i) => `
+    <button class="nav-btn" data-key="${v.key}" style="animation: fadeUp .4s ease ${i*40}ms both;">
+      <span class="nav-icon">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="${v.icon}"/></svg>
+      </span>
+      <span class="flex-1">${v.name}</span>
+      <svg class="opacity-0 group-hover:opacity-100 transition" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+    </button>
+  `).join('');
+  const ROUTES = {
+    'partnership-sales': 'partnership-sales.html',
+  };
+  root.querySelectorAll('.nav-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.key;
+      if (ROUTES[key]) { window.location.href = ROUTES[key]; return; }
+      toast(`"${VERTICALS.find(v=>v.key===key).name}" page coming next — let me know when to build it.`, 'ok');
+    });
+  });
+}
+
+/* ============================================================
+ *  COUNTDOWNS
+ * ============================================================ */
+function renderCountdowns() {
+  const list = get(STORE.COUNTDOWNS, []).slice().sort((a,b) => daysUntil(a.date) - daysUntil(b.date));
+  const el = document.getElementById('countdown-list');
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">No countdowns yet. Tap <b class="mx-1">Add</b> to create one.</div>`;
+    return;
+  }
+  el.innerHTML = list.map(c => {
+    const d = daysUntil(c.date);
+    const cls = d < 0 ? 'urgent' : d <= 3 ? 'urgent' : d <= 7 ? 'soon' : '';
+    const display = d < 0 ? `${Math.abs(d)} <span class="text-base font-medium text-eb-muted">overdue</span>` : d;
+    return `
+      <div class="cd-card flex items-center justify-between">
+        <div class="min-w-0">
+          <div class="font-bold text-eb-ink truncate">${escapeHtml(c.name)} <span class="text-eb-muted font-normal">(${escapeHtml(c.unit)})</span></div>
+          <div class="text-[12px] text-eb-muted mt-1">Target: ${new Date(c.date).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'})}</div>
+        </div>
+        <div class="text-right flex items-center gap-3">
+          <div class="cd-num ${cls}">${display}</div>
+          <button class="btn-icon" data-del="${c.id}" title="Remove">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('[data-del]').forEach(b => b.onclick = () => {
+    const id = b.dataset.del;
+    const item = get(STORE.COUNTDOWNS, []).find(x => x.id === id);
+    const name = item ? item.name : 'this countdown';
+    confirmDelete(`Delete countdown "${name}"? This cannot be undone.`, () => {
+      const next = get(STORE.COUNTDOWNS, []).filter(x => x.id !== id);
+      set(STORE.COUNTDOWNS, next); renderCountdowns();
+      toast('Countdown deleted');
+    });
+  });
+}
+document.getElementById('add-countdown-btn').onclick = () => openCountdownModal();
+function openCountdownModal() {
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">New Countdown</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Track a milestone with a live timer — counted <b class="text-eb-ink">In Days</b>.</p>
+      <div class="space-y-4">
+        <div><label class="lbl">Name</label><input id="cd-name" class="input" placeholder="e.g. Series-A Closure" /></div>
+        <div>
+          <label class="lbl">Date of event</label>
+          <input id="cd-date" type="date" class="input" min="${todayISO()}" />
+          <p class="text-[12px] text-eb-muted mt-1.5">Countdown is shown <b>In Days</b> until this date.</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="cd-save">Create</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('cd-save').onclick = () => {
+    const name = document.getElementById('cd-name').value.trim();
+    const unit = 'Days';
+    const date = document.getElementById('cd-date').value;
+    if (!name) return toast('Name is required', 'warn');
+    if (!date) return toast('Date is required', 'warn');
+    const list = get(STORE.COUNTDOWNS, []);
+    list.push({ id: uid(), name, unit, date });
+    set(STORE.COUNTDOWNS, list);
+    closeModal(); renderCountdowns(); toast('Countdown created');
+  };
+}
+
+/* ============================================================
+ *  MEETINGS — Google Calendar integration shell
+ *  ----------------------------------------------------------
+ *  REAL INTEGRATION (do this when you get OAuth credentials):
+ *  1) Create a Google Cloud project, enable Calendar API
+ *  2) Add OAuth client ID for your domain
+ *  3) Replace the connectGoogleCalendar() body with the GIS flow
+ *     (https://developers.google.com/identity/oauth2/web/guides/use-token-model)
+ *  4) Call calendar.events.list and map results into the meetings shape
+ *  Until then: editable mock data + manual add stays usable.
+ * ============================================================ */
+function renderMeetings() {
+  const list = get(STORE.MEETINGS, [])
+    .filter(m => daysUntil(m.date) >= 0)
+    .sort((a,b)=> a.date.localeCompare(b.date));
+  const el = document.getElementById('meeting-list');
+  if (!list.length) {
+    el.innerHTML = `<div class="empty">No upcoming meetings. Connect Google Calendar to sync, or add one manually.<br/><button class="btn-primary mt-3" id="add-meet-manual">+ Add meeting</button></div>`;
+    document.getElementById('add-meet-manual').onclick = () => openMeetingModal();
+    return;
+  }
+  el.innerHTML = list.map(m => `
+    <div class="meet-card flex items-start gap-3">
+      <div class="text-center pt-0.5">
+        <div class="font-display font-bold text-eb-blue text-base leading-none">${fmtDDMM(m.date)}</div>
+        <div class="text-[10px] uppercase tracking-wider text-eb-muted mt-1">${new Date(m.date).toLocaleDateString('en-IN',{weekday:'short'})}</div>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="font-semibold text-eb-ink text-[14px] truncate">${escapeHtml(m.name)}</div>
+        ${m.link ? `<a href="${escapeHtml(m.link)}" target="_blank" class="text-[12px] text-eb-blue hover:underline truncate block">🔗 ${escapeHtml(m.link)}</a>`
+                 : m.location ? `<div class="text-[12px] text-eb-muted truncate">📍 ${escapeHtml(m.location)}</div>`
+                              : `<div class="text-[12px] text-eb-muted">No link / location</div>`}
+      </div>
+      <div class="flex items-center gap-1">
+        <button class="btn-icon" data-fwd-meet="${m.id}" title="Forward to team">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 17 20 12 15 7"/><path d="M4 18v-2a4 4 0 0 1 4-4h12"/></svg>
+        </button>
+        <button class="btn-icon" data-del-meet="${m.id}" title="Remove">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+  `).join('') + `<button class="btn-ghost w-full justify-center mt-2" id="add-meet-manual">+ Add manually</button>`;
+  el.querySelectorAll('[data-del-meet]').forEach(b => b.onclick = () => {
+    const id = b.dataset.delMeet;
+    const item = get(STORE.MEETINGS, []).find(x => x.id === id);
+    const name = item ? item.name : 'this meeting';
+    confirmDelete(`Delete meeting "${name}"? This cannot be undone.`, () => {
+      set(STORE.MEETINGS, get(STORE.MEETINGS, []).filter(x => x.id !== id));
+      renderMeetings();
+      toast('Meeting deleted');
+    });
+  });
+  el.querySelectorAll('[data-fwd-meet]').forEach(b => b.onclick = () => openForwardMeetingModal(b.dataset.fwdMeet));
+  document.getElementById('add-meet-manual').onclick = () => openMeetingModal();
+}
+
+/* ============================================================
+ *  FORWARD MEETING — sends a calendar invite (.ics) to teammates
+ *  Generates an RFC-5545 .ics file and:
+ *    - downloads it (so user can attach if mail client strips it)
+ *    - opens mailto: pre-filled with recipients + meeting details
+ *  Most desktop mail clients (Gmail web, Outlook, Apple Mail) will
+ *  auto-recognize a pasted .ics or treat it as a calendar invite.
+ * ============================================================ */
+function buildICS(m) {
+  const dt = m.date.replace(/-/g, '');
+  const stamp = new Date().toISOString().replace(/[-:.]/g,'').slice(0,15) + 'Z';
+  const desc = (m.link ? `Join: ${m.link}\\n` : '') + (m.location ? `Where: ${m.location}` : '');
+  const loc = m.location || m.link || '';
+  return [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Command Center//Saurav//EN',
+    'METHOD:REQUEST',
+    'BEGIN:VEVENT',
+    `UID:${m.id}@command-center`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART;VALUE=DATE:${dt}`,
+    `DTEND;VALUE=DATE:${dt}`,
+    `SUMMARY:${(m.name||'').replace(/[\r\n,;]/g,' ')}`,
+    `DESCRIPTION:${desc.replace(/[\r\n]/g,'\\n')}`,
+    `LOCATION:${loc.replace(/[\r\n,;]/g,' ')}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+}
+function openForwardMeetingModal(meetId) {
+  const m = get(STORE.MEETINGS, []).find(x => x.id === meetId); if (!m) return;
+  const team = get(STORE.TEAM, []);
+  if (!team.length) {
+    toast('Upload your team Excel first to forward meetings.', 'warn');
+    return;
+  }
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Forward meeting</h3>
+      <p class="text-eb-muted text-[13px] mb-4">
+        Send "<b class="text-eb-ink">${escapeHtml(m.name)}</b>" as a calendar invite to selected teammates.
+      </p>
+      <div class="space-y-2 max-h-64 overflow-y-auto nice-scroll border border-eb-line rounded-lg p-3 mb-4">
+        ${team.map(p => `
+          <label class="flex items-center gap-2 text-[14px] cursor-pointer hover:bg-eb-paper2 px-2 py-1 rounded">
+            <input type="checkbox" class="fwd-check" value="${escapeHtml(p.email)}" data-name="${escapeHtml(p.name)}" />
+            <span class="font-medium text-eb-ink">${escapeHtml(p.name)}</span>
+            <span class="text-eb-muted text-[12px]">${escapeHtml(p.email)}</span>
+          </label>
+        `).join('')}
+      </div>
+      <label class="lbl">Note to recipients (optional)</label>
+      <textarea id="fwd-note" class="input" rows="3" placeholder="Adding you to this meeting — please join."></textarea>
+      <div class="bg-eb-paper2 border border-eb-line rounded-lg p-3 text-[12px] text-eb-muted mt-4">
+        <b class="text-eb-ink">How it works:</b> A <code>.ics</code> calendar invite file downloads automatically,
+        and your mail client opens with the recipients and details pre-filled. Attach the downloaded
+        <code>.ics</code> file so the meeting drops into their calendar.
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="fwd-send">Forward invite</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('fwd-send').onclick = () => {
+    const checks = [...document.querySelectorAll('.fwd-check:checked')];
+    if (!checks.length) return toast('Pick at least one teammate', 'warn');
+    const emails = checks.map(c => c.value);
+    const names = checks.map(c => c.dataset.name);
+    const note = document.getElementById('fwd-note').value.trim();
+
+    const ics = buildICS(m);
+    const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${(m.name||'meeting').replace(/[^\w-]+/g,'_')}.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+
+    const subject = `Invite: ${m.name}`;
+    const body =
+`Hi ${names.length === 1 ? names[0].split(' ')[0] : 'team'},
+
+${note ? note + '\n\n' : ''}Forwarding the meeting below — please add to your calendar (the .ics file is attached / just downloaded to my machine; attach it to this draft before sending).
+
+Meeting: ${m.name}
+Date: ${new Date(m.date).toLocaleDateString('en-IN',{weekday:'long',day:'2-digit',month:'long',year:'numeric'})}
+${m.link ? `Join link: ${m.link}` : ''}${m.location ? `\nLocation: ${m.location}` : ''}
+
+Thanks,
+Saurav`;
+    window.location.href = `mailto:${encodeURIComponent(emails.join(','))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    closeModal();
+    toast(`Invite drafted for ${names.length} teammate${names.length>1?'s':''}`);
+  };
+}
+function openMeetingModal() {
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Add Meeting</h3>
+      <p class="text-eb-muted text-[13px] mb-5">Manually log a meeting (Google Calendar sync coming).</p>
+      <div class="space-y-4">
+        <div><label class="lbl">Name</label><input id="m-name" class="input" placeholder="e.g. Investor sync" /></div>
+        <div><label class="lbl">Date</label><input id="m-date" type="date" class="input" min="${todayISO()}" /></div>
+        <div><label class="lbl">Meet link (if virtual)</label><input id="m-link" class="input" placeholder="https://meet.google.com/..." /></div>
+        <div><label class="lbl">Location (if in-person)</label><input id="m-loc" class="input" placeholder="Address / venue" /></div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="m-save">Save</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('m-save').onclick = () => {
+    const name = document.getElementById('m-name').value.trim();
+    const date = document.getElementById('m-date').value;
+    if (!name || !date) return toast('Name and date required', 'warn');
+    const list = get(STORE.MEETINGS, []);
+    list.push({
+      id: uid(), name, date,
+      link: document.getElementById('m-link').value.trim(),
+      location: document.getElementById('m-loc').value.trim(),
+    });
+    set(STORE.MEETINGS, list); closeModal(); renderMeetings(); toast('Meeting added');
+  };
+}
+
+document.getElementById('connect-calendar-btn').onclick = connectGoogleCalendar;
+function connectGoogleCalendar() {
+  // TODO(real-integration): replace this stub with Google Identity Services token flow
+  // and a calendar.events.list call. See comment block above.
+  showModal(`
+    <div class="p-6">
+      <h3 class="font-display font-bold text-xl text-eb-ink mb-1">Connect Google Calendar</h3>
+      <p class="text-eb-muted text-[13px] mb-4">
+        Live calendar sync requires a Google Cloud OAuth client. Once you have one, paste the Client ID below and we'll
+        wire the live sync. Until then, meetings can be added manually.
+      </p>
+      <div class="bg-eb-paper2 border border-eb-line rounded-lg p-3 text-[12px] text-eb-muted mb-4">
+        <b class="text-eb-ink">Setup steps:</b>
+        <ol class="list-decimal pl-4 mt-1 space-y-1">
+          <li>Go to <a href="https://console.cloud.google.com/" target="_blank" class="text-eb-blue underline">console.cloud.google.com</a></li>
+          <li>Create project → enable <b>Google Calendar API</b></li>
+          <li>Create OAuth 2.0 Client ID → add your hosted domain to Authorized JavaScript origins</li>
+          <li>Paste the Client ID below</li>
+        </ol>
+      </div>
+      <label class="lbl">Google OAuth Client ID</label>
+      <input id="gcal-client" class="input" placeholder="xxxxxxxxx.apps.googleusercontent.com" />
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Later</button>
+        <button class="btn-primary" id="gcal-save">Save & Connect</button>
+      </div>
+    </div>
+  `);
+  document.getElementById('gcal-save').onclick = () => {
+    const v = document.getElementById('gcal-client').value.trim();
+    if (!v) return toast('Paste your Client ID first', 'warn');
+    set(STORE.CAL_TOKEN, { clientId: v, savedAt: Date.now() });
+    document.getElementById('calendar-status').textContent = 'Calendar configured';
+    closeModal();
+    toast('Saved — full sync activates after OAuth handshake is wired in main.js');
+  };
+}
+
+/* ============================================================
+ *  TO-DO (multi-date filter, assignee = current user)
+ * ============================================================ */
+let todoSelectedDates = []; // ISO yyyy-mm-dd
+function renderTodoPills() {
+  const root = document.getElementById('todo-date-pills');
+  if (!todoSelectedDates.length) { root.innerHTML = `<span class="text-[12px] text-eb-muted">No date filter — showing all your open tasks.</span>`; return; }
+  root.innerHTML = todoSelectedDates.map(d => `
+    <span class="date-pill">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      ${new Date(d).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}
+      <button data-rm-date="${d}" aria-label="remove">×</button>
+    </span>`).join('');
+  root.querySelectorAll('[data-rm-date]').forEach(b => b.onclick = () => {
+    todoSelectedDates = todoSelectedDates.filter(x => x !== b.dataset.rmDate);
+    renderTodoPills(); renderTodos();
+  });
+}
+/* Pull partner_tasks (and the partners they belong to) from Supabase so
+   anything assigned to the current user surfaces on the dashboard To-Do.
+   Cached in localStorage so the panel renders immediately on next load. */
+async function loadPartnerTasksFromSupabase() {
+  if (!sb) return;
+  try {
+    const [P, T] = await Promise.all([
+      sb.from('partners').select('id,name'),
+      sb.from('partner_tasks').select('*'),
+    ]);
+    if (P.error) throw P.error;
+    if (T.error) throw T.error;
+    set(STORE.PARTNERS, P.data || []);
+    set(STORE.PARTNER_TASKS, T.data || []);
+    renderTodos();
+  } catch (err) {
+    console.warn('Could not load partner tasks from Supabase:', err.message);
+  }
+}
+
+/* Adapt a partner_tasks row into the same shape the dashboard renderers expect.
+   Prefix the id with "pt:" so we can route resolve/click back to the right store. */
+function partnerTaskAsTodo(row, partnersById) {
+  const partnerName = partnersById[row.partner_id] || 'Partnership & Sales';
+  return {
+    id: 'pt:' + row.id,
+    _source: 'partner',
+    _rawId: row.id,
+    title: row.title,
+    assignee: row.assignee || '',
+    vertical: 'Partner · ' + partnerName,
+    deadline: row.end_date || '',
+    subtasks: (row.subtasks || []).map(s => s.text || s).filter(Boolean),
+    documents: row.attachment_name ? [{ name: row.attachment_name, url: '#' }] : [],
+    content: row.description || '',
+    resolved: !!row.resolved,
+  };
+}
+
+/* Resolve a task no matter which store it came from. Local tasks live in
+   cc_tasks_v1; partner tasks live in Supabase (mirrored to cc_partner_tasks_v1). */
+async function toggleTaskResolved(taskId) {
+  if (taskId.startsWith('pt:')) {
+    const realId = taskId.slice(3);
+    const list = get(STORE.PARTNER_TASKS, []);
+    const row = list.find(x => x.id === realId); if (!row) return;
+    const newVal = !row.resolved;
+    row.resolved = newVal;
+    set(STORE.PARTNER_TASKS, list);
+    renderTodos();
+    if (sb) {
+      const { error } = await sb.from('partner_tasks').update({ resolved: newVal }).eq('id', realId);
+      if (error) {
+        row.resolved = !newVal;
+        set(STORE.PARTNER_TASKS, list);
+        renderTodos();
+        return toast('Could not save: ' + error.message, 'danger');
+      }
+    }
+    toast(newVal ? 'Marked as resolved' : 'Reopened');
+    return;
+  }
+  const all = get(STORE.TASKS, []);
+  const t = all.find(x => x.id === taskId); if (!t) return;
+  t.resolved = !t.resolved;
+  set(STORE.TASKS, all);
+  renderTodos();
+  renderAssigned();
+  toast(t.resolved ? 'Marked as resolved' : 'Reopened');
+}
+
+function getMergedTodos() {
+  const local = get(STORE.TASKS, []);
+  const partnerRows = get(STORE.PARTNER_TASKS, []);
+  const partners = get(STORE.PARTNERS, []);
+  const partnersById = Object.fromEntries(partners.map(p => [p.id, p.name]));
+  const partnerTodos = partnerRows.map(r => partnerTaskAsTodo(r, partnersById));
+  return [...local, ...partnerTodos];
+}
+
+function renderTodos() {
+  const all = getMergedTodos();
+  let mine = all.filter(t => (t.assignee || '').toLowerCase() === CURRENT_USER.toLowerCase());
+  if (todoSelectedDates.length) mine = mine.filter(t => todoSelectedDates.includes(t.deadline));
+  // Unresolved first (by deadline asc), resolved at the bottom (also by deadline asc)
+  mine.sort((a,b) => {
+    const ar = a.resolved ? 1 : 0, br = b.resolved ? 1 : 0;
+    if (ar !== br) return ar - br;
+    return (a.deadline || '').localeCompare(b.deadline || '');
+  });
+  const el = document.getElementById('todo-list');
+  if (!mine.length) { el.innerHTML = `<div class="empty m-3">Nothing on your plate for these dates. Enjoy a clear runway.</div>`; return; }
+  el.innerHTML = mine.map(t => {
+    const d = daysUntil(t.deadline);
+    const dotCls = d < 0 ? 'bg-eb-danger' : d <= 2 ? 'bg-eb-warn' : 'bg-eb-ok';
+    const resolved = !!t.resolved;
+    const dueLabel = resolved
+      ? `<span class="text-[11px] font-semibold text-eb-muted">Resolved</span>`
+      : `<span class="text-[11px] font-semibold ${d<0?'text-eb-danger':d<=2?'text-eb-warn':'text-eb-muted'}">${d<0?Math.abs(d)+'d late':d===0?'today':d+'d'}</span>`;
+    const dueText = t.deadline ? new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'}) : '—';
+    return `
+      <div class="task-row ${resolved?'resolved':''}" data-task="${t.id}">
+        <span class="dot ${dotCls}"></span>
+        <div class="flex-1 min-w-0">
+          <div class="task-title font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
+          <div class="text-[11px] text-eb-muted">${escapeHtml(t.vertical || '—')} · due ${dueText}</div>
+        </div>
+        ${dueLabel}
+        <button class="btn-resolve ${resolved?'is-resolved':''}" data-resolve="${t.id}" title="${resolved?'Reopen task':'Mark as resolved'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('[data-task]').forEach(r => r.onclick = (e) => {
+    if (e.target.closest('[data-resolve]')) return;
+    openTaskModal(r.dataset.task, false);
+  });
+  el.querySelectorAll('[data-resolve]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); toggleTaskResolved(b.dataset.resolve);
+  });
+}
+document.getElementById('todo-clear-dates').onclick = () => {
+  todoSelectedDates = []; renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+};
+
+/* Multi-date inline calendar — click days to toggle, no separate "Add date" button */
+const _calState = { year: new Date().getFullYear(), month: new Date().getMonth() };
+function updateTodoCalLabel() {
+  const lbl = document.getElementById('todo-cal-label');
+  lbl.textContent = todoSelectedDates.length
+    ? `${todoSelectedDates.length} date${todoSelectedDates.length>1?'s':''} selected`
+    : 'Filter dates';
+}
+function renderTodoCalendar() {
+  const pop = document.getElementById('todo-cal-pop');
+  if (pop.classList.contains('hidden')) return;
+  const { year, month } = _calState;
+  const first = new Date(year, month, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInPrev = new Date(year, month, 0).getDate();
+  const monthName = first.toLocaleDateString('en-IN', { month:'long', year:'numeric' });
+  const todayIso = todayISO();
+  const dowLabels = ['S','M','T','W','T','F','S'];
+
+  const cells = [];
+  for (let i = startDow - 1; i >= 0; i--) {
+    const day = daysInPrev - i;
+    cells.push({ day, muted: true, iso: null });
+  }
+  for (let d = 1; d <= daysInMonth; d++) {
+    const iso = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    cells.push({ day: d, muted: false, iso });
+  }
+  while (cells.length % 7 !== 0) {
+    const day = cells.length - (startDow + daysInMonth) + 1;
+    cells.push({ day, muted: true, iso: null });
+  }
+
+  const rangeFrom = _calState.from || '';
+  const rangeTo = _calState.to || '';
+  pop.innerHTML = `
+    <div class="cal-range">
+      <div><label>From</label><input type="date" data-cal-from value="${rangeFrom}" /></div>
+      <div><label>To</label><input type="date" data-cal-to value="${rangeTo}" /></div>
+    </div>
+    <div class="cal-head">
+      <button class="cal-nav" data-cal-prev aria-label="Previous month">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m15 18-6-6 6-6"/></svg>
+      </button>
+      <div class="cal-title">${monthName}</div>
+      <button class="cal-nav" data-cal-next aria-label="Next month">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m9 18 6-6-6-6"/></svg>
+      </button>
+    </div>
+    <div class="cal-grid">
+      ${dowLabels.map(l => `<div class="cal-dow">${l}</div>`).join('')}
+      ${cells.map(c => {
+        const cls = ['cal-day'];
+        if (c.muted) cls.push('muted');
+        if (c.iso === todayIso) cls.push('today');
+        if (c.iso && todoSelectedDates.includes(c.iso)) cls.push('selected');
+        if (c.iso && rangeFrom && rangeTo && c.iso >= rangeFrom && c.iso <= rangeTo && !todoSelectedDates.includes(c.iso)) {
+          cls.push('in-range');
+          if (c.iso === rangeFrom) cls.push('range-start');
+          if (c.iso === rangeTo) cls.push('range-end');
+        }
+        return `<div class="${cls.join(' ')}" ${c.iso ? `data-cal-day="${c.iso}"` : ''}>${c.day}</div>`;
+      }).join('')}
+    </div>
+    <div class="cal-foot">
+      <button data-cal-clear>Clear</button>
+      <button data-cal-apply-range>Apply range</button>
+      <button data-cal-today>Today</button>
+    </div>
+  `;
+  pop.querySelector('[data-cal-prev]').onclick = () => {
+    _calState.month--;
+    if (_calState.month < 0) { _calState.month = 11; _calState.year--; }
+    renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-next]').onclick = () => {
+    _calState.month++;
+    if (_calState.month > 11) { _calState.month = 0; _calState.year++; }
+    renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-clear]').onclick = () => {
+    todoSelectedDates = []; _calState.from = ''; _calState.to = '';
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+  };
+  pop.querySelector('[data-cal-today]').onclick = () => {
+    const now = new Date();
+    _calState.year = now.getFullYear(); _calState.month = now.getMonth();
+    renderTodoCalendar();
+  };
+  pop.querySelector('[data-cal-from]').onchange = (e) => { _calState.from = e.target.value; renderTodoCalendar(); };
+  pop.querySelector('[data-cal-to]').onchange   = (e) => { _calState.to   = e.target.value; renderTodoCalendar(); };
+  pop.querySelector('[data-cal-apply-range]').onclick = () => {
+    const f = _calState.from, t = _calState.to;
+    if (!f || !t) return toast('Pick both From and To dates', 'warn');
+    if (f > t)    return toast('"From" must be on/before "To"', 'warn');
+    const start = new Date(f), end = new Date(t);
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
+      const iso = d.toISOString().slice(0,10);
+      if (!todoSelectedDates.includes(iso)) todoSelectedDates.push(iso);
+    }
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+  };
+  pop.querySelectorAll('[data-cal-day]').forEach(d => d.onclick = () => {
+    const iso = d.dataset.calDay;
+    const idx = todoSelectedDates.indexOf(iso);
+    if (idx >= 0) todoSelectedDates.splice(idx, 1);
+    else todoSelectedDates.push(iso);
+    renderTodoPills(); renderTodos(); renderTodoCalendar(); updateTodoCalLabel();
+  });
+}
+document.getElementById('todo-cal-toggle').onclick = (e) => {
+  e.stopPropagation();
+  const pop = document.getElementById('todo-cal-pop');
+  pop.classList.toggle('hidden');
+  if (!pop.classList.contains('hidden')) {
+    if (todoSelectedDates.length) {
+      const ref = new Date(todoSelectedDates[todoSelectedDates.length-1]);
+      _calState.year = ref.getFullYear(); _calState.month = ref.getMonth();
+    }
+    renderTodoCalendar();
+  }
+};
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('todo-cal-pop');
+  if (!pop || pop.classList.contains('hidden')) return;
+  if (!pop.contains(e.target) && !e.target.closest('#todo-cal-toggle')) pop.classList.add('hidden');
+});
+
+/* ============================================================
+ *  TASKS ASSIGNED (by Saurav, to others)
+ * ============================================================ */
+function refreshAssigneeOptions() {
+  const sel = document.getElementById('assignee-filter');
+  const team = get(STORE.TEAM, []);
+  const cur = sel.value;
+  sel.innerHTML = `<option value="">All people</option>` + team.map(p =>
+    `<option value="${escapeHtml(p.name)}">${escapeHtml(p.name)}</option>`
+  ).join('');
+  sel.value = cur;
+}
+function renderAssigned() {
+  const all = get(STORE.TASKS, []);
+  const team = get(STORE.TEAM, []);
+  const teamNames = new Set(team.map(p => p.name.toLowerCase()));
+  const filter = document.getElementById('assignee-filter').value;
+
+  // any task whose assignee is in the team (i.e. NOT Saurav himself)
+  let assigned = all.filter(t => t.assignee && t.assignee.toLowerCase() !== CURRENT_USER.toLowerCase());
+  if (filter) assigned = assigned.filter(t => t.assignee === filter);
+  assigned.sort((a,b) => {
+    const ar = a.resolved ? 1 : 0, br = b.resolved ? 1 : 0;
+    if (ar !== br) return ar - br;
+    return (a.deadline||'').localeCompare(b.deadline||'');
+  });
+
+  const el = document.getElementById('assigned-list');
+  if (!assigned.length) {
+    el.innerHTML = `<div class="empty m-3">${filter ? 'No tasks for this person.' : team.length ? 'No tasks assigned out yet.' : 'Upload your team to start assigning.'}</div>`;
+    return;
+  }
+  el.innerHTML = assigned.map(t => {
+    const d = daysUntil(t.deadline);
+    const dotCls = d < 0 ? 'bg-eb-danger' : d <= 2 ? 'bg-eb-warn' : 'bg-eb-ok';
+    const resolved = !!t.resolved;
+    return `
+      <div class="task-row ${resolved?'resolved':''}" data-task="${t.id}">
+        <span class="dot ${dotCls}"></span>
+        <div class="flex-1 min-w-0">
+          <div class="task-title font-medium text-eb-ink text-[14px] truncate">${escapeHtml(t.title)}</div>
+          <div class="text-[11px] text-eb-muted">${escapeHtml(t.assignee)} · ${escapeHtml(t.vertical||'—')} · due ${new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short'})}</div>
+        </div>
+        <button class="btn-icon" data-ping="${t.id}" title="Ask for an update by email">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        </button>
+        <button class="btn-resolve ${resolved?'is-resolved':''}" data-resolve="${t.id}" title="${resolved?'Reopen task':'Mark as resolved'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </button>
+      </div>`;
+  }).join('');
+  el.querySelectorAll('[data-task]').forEach(r => r.onclick = (e) => {
+    if (e.target.closest('[data-ping]') || e.target.closest('[data-resolve]')) return;
+    openTaskModal(r.dataset.task, true);
+  });
+  el.querySelectorAll('[data-ping]').forEach(b => b.onclick = (e) => { e.stopPropagation(); pingForUpdate(b.dataset.ping); });
+  el.querySelectorAll('[data-resolve]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation(); toggleTaskResolved(b.dataset.resolve);
+  });
+}
+document.getElementById('assignee-filter').onchange = renderAssigned;
+
+/* Upload team via Excel/CSV (two columns: name, email) */
+document.getElementById('upload-team-btn').onclick = () => document.getElementById('team-file-input').click();
+document.getElementById('team-file-input').onchange = async (e) => {
+  const file = e.target.files[0]; if (!file) return;
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!rows.length) throw new Error('Empty file');
+    // Accept any of: name/Name/full name + email/Email/email id
+    const team = rows.map(r => {
+      const keys = Object.keys(r);
+      const nameKey  = keys.find(k => /name/i.test(k));
+      const emailKey = keys.find(k => /e[\-_ ]?mail/i.test(k));
+      return { name: String(r[nameKey] || '').trim(), email: String(r[emailKey] || '').trim() };
+    }).filter(p => p.name && /\S+@\S+\.\S+/.test(p.email));
+    if (!team.length) throw new Error('Could not find Name and Email columns. Need columns named like "Name" and "Email".');
+    set(STORE.TEAM, team); refreshAssigneeOptions(); renderAssigned();
+    toast(`Imported ${team.length} team member${team.length>1?'s':''}`);
+  } catch (err) {
+    toast(err.message || 'Failed to read file', 'danger');
+  } finally {
+    e.target.value = ''; // allow re-upload of same file
+  }
+};
+
+/* ============================================================
+ *  TASK DETAIL MODAL (used by both lists)
+ * ============================================================ */
+function openTaskModal(taskId, isAssignedToOthers) {
+  // Partner tasks (id prefixed "pt:") come from Supabase via the merged To-Do list.
+  let t;
+  if (taskId.startsWith('pt:')) {
+    const realId = taskId.slice(3);
+    const partners = get(STORE.PARTNERS, []);
+    const partnersById = Object.fromEntries(partners.map(p => [p.id, p.name]));
+    const row = get(STORE.PARTNER_TASKS, []).find(x => x.id === realId);
+    if (!row) return;
+    t = partnerTaskAsTodo(row, partnersById);
+    isAssignedToOthers = false; // no email/comm log on partner tasks here
+  } else {
+    t = get(STORE.TASKS, []).find(x => x.id === taskId);
+    if (!t) return;
+  }
+  const log = get(STORE.COMM_LOG, []).filter(l => l.taskId === taskId);
+  const resolved = !!t.resolved;
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-start justify-between gap-4 mb-1">
+        <h3 class="font-display font-bold text-xl text-eb-ink ${resolved?'line-through opacity-60':''}">${escapeHtml(t.title)}</h3>
+        <div class="flex items-center gap-2">
+          ${resolved ? `<span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-emerald-100 text-emerald-700" style="background:rgba(16,185,129,.12); color:#0E9E73;">Resolved</span>` : ''}
+          <span class="text-[11px] font-semibold uppercase tracking-wider px-2 py-1 rounded bg-eb-paper2 text-eb-muted">${escapeHtml(t.vertical||'General')}</span>
+        </div>
+      </div>
+      <div class="text-[13px] text-eb-muted mb-5">
+        Assigned to <b class="text-eb-ink">${escapeHtml(t.assignee||'—')}</b> · Deadline
+        <b class="text-eb-ink">${t.deadline ? new Date(t.deadline).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</b>
+      </div>
+
+      <section class="mb-5">
+        <div class="lbl">Sub-tasks</div>
+        ${t.subtasks?.length ? `<ul class="space-y-1">${t.subtasks.map(s => `<li class="flex items-center gap-2 text-[14px]"><span class="w-4 h-4 rounded border border-eb-line"></span>${escapeHtml(s)}</li>`).join('')}</ul>` : `<div class="text-[13px] text-eb-muted">None.</div>`}
+      </section>
+
+      <section class="mb-5">
+        <div class="lbl">Documents</div>
+        ${t.documents?.length ? `<ul class="space-y-1">${t.documents.map(d => `<li><a href="${escapeHtml(d.url||'#')}" class="text-eb-blue hover:underline text-[14px]">📄 ${escapeHtml(d.name)}</a></li>`).join('')}</ul>` : `<div class="text-[13px] text-eb-muted">None attached.</div>`}
+      </section>
+
+      <section class="mb-5">
+        <div class="lbl">Content / Notes</div>
+        <div class="text-[14px] text-eb-ink whitespace-pre-wrap">${escapeHtml(t.content || '—')}</div>
+      </section>
+
+      ${isAssignedToOthers ? `
+      <section class="mb-2">
+        <div class="lbl">Communication log</div>
+        ${log.length ? `<div class="space-y-2 max-h-32 overflow-y-auto nice-scroll">${log.map(l => `
+          <div class="text-[12px] border-l-2 border-eb-blue pl-2">
+            <div class="text-eb-muted">${new Date(l.ts).toLocaleString('en-IN')} · ${escapeHtml(l.direction)}</div>
+            <div class="font-medium text-eb-ink">${escapeHtml(l.subject)}</div>
+            <div class="text-eb-muted line-clamp-2">${escapeHtml(l.body)}</div>
+          </div>`).join('')}</div>` : `<div class="text-[13px] text-eb-muted">No messages yet. Use "Request update" to start a thread.</div>`}
+      </section>
+      <div class="flex justify-end gap-2 mt-5">
+        <button class="btn-ghost" id="task-resolve-toggle">${resolved?'Reopen task':'Mark as resolved'}</button>
+        <button class="btn-ghost" data-close>Close</button>
+        <button class="btn-primary" id="task-ping">Request update</button>
+      </div>` : `
+      <div class="flex justify-end gap-2 mt-5">
+        <button class="btn-ghost" id="task-resolve-toggle">${resolved?'Reopen task':'Mark as resolved'}</button>
+        <button class="btn-ghost" data-close>Close</button>
+      </div>`}
+    </div>
+  `, /*lg*/ true);
+  if (isAssignedToOthers) {
+    document.getElementById('task-ping').onclick = () => { closeModal(); pingForUpdate(taskId); };
+  }
+  document.getElementById('task-resolve-toggle').onclick = () => {
+    toggleTaskResolved(taskId); closeModal();
+  };
+}
+
+/* ============================================================
+ *  PING FOR UPDATE (email request) + COMM LOG
+ *  ----------------------------------------------------------
+ *  Browsers can't send email server-to-server. Two-tier approach:
+ *  1) WORKING TODAY → opens user's mail client (mailto:) pre-filled
+ *  2) FUTURE        → POST to /api/send-email (your backend)
+ *     and a webhook on inbound replies that appends to comm log.
+ * ============================================================ */
+function pingForUpdate(taskId) {
+  const t = get(STORE.TASKS, []).find(x => x.id === taskId); if (!t) return;
+  const team = get(STORE.TEAM, []);
+  const member = team.find(p => p.name === t.assignee);
+  if (!member) return toast('No email on file for ' + t.assignee + ' — upload team Excel first.', 'warn');
+
+  const subject = `[Update needed] ${t.title}`;
+  const body =
+`Hi ${t.assignee.split(' ')[0]},
+
+Could you share an update on the task below? Just reply to this email and the update will be logged automatically.
+
+Task: ${t.title}
+Vertical: ${t.vertical || '—'}
+Deadline: ${t.deadline ? new Date(t.deadline).toLocaleDateString('en-IN') : '—'}
+
+Thanks,
+Saurav`;
+
+  // Open mail client
+  window.location.href = `mailto:${encodeURIComponent(member.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+  // Log the outbound communication
+  const log = get(STORE.COMM_LOG, []);
+  log.push({ id: uid(), taskId, to: member.email, subject, body, ts: Date.now(), direction: 'outbound (manual mail client)' });
+  set(STORE.COMM_LOG, log);
+  toast(`Update request drafted for ${t.assignee}`);
+
+  // FUTURE: replace mailto with backend call:
+  // fetch('/api/send-email', { method:'POST', body: JSON.stringify({ to: member.email, subject, body, taskId }) });
+}
+
+/* ============================================================
+ *  MODAL helpers
+ * ============================================================ */
+function showModal(innerHTML, lg=false) {
+  const root = document.getElementById('modal-root');
+  root.innerHTML = `<div class="modal-back"><div class="modal-card ${lg?'lg':''}">${innerHTML}</div></div>`;
+  root.querySelector('.modal-back').addEventListener('click', (e) => { if (e.target.classList.contains('modal-back')) closeModal(); });
+  root.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', closeModal));
+}
+function closeModal() { document.getElementById('modal-root').innerHTML = ''; }
+function confirmDelete(message, onConfirm) {
+  showModal(`
+    <div class="p-6">
+      <div class="flex items-start gap-3 mb-3">
+        <div class="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0" style="background: rgba(239,68,68,.12); color:#EF4444;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        </div>
+        <div>
+          <h3 class="font-display font-bold text-xl text-eb-ink leading-tight">Confirm deletion</h3>
+          <p class="text-eb-muted text-[13px] mt-1">${escapeHtml(message)}</p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button class="btn-ghost" data-close>Cancel</button>
+        <button class="btn-primary" id="confirm-delete-btn" style="background:#EF4444;">Confirm</button>
+      </div>
+    </div>
+  `);
+  const btn = document.getElementById('confirm-delete-btn');
+  btn.onmouseenter = () => { btn.style.background = '#DC2626'; };
+  btn.onmouseleave = () => { btn.style.background = '#EF4444'; };
+  btn.onclick = () => { closeModal(); onConfirm(); };
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+/* ============================================================
+ *  KEYBOARD: ⌘K placeholder for global search (next phase)
+ * ============================================================ */
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    toast('Global search ships in the next page batch — let me know when to build it.');
+  }
+});
+document.getElementById('search-btn').onclick = () => toast('Global search ships in the next page batch.');
+document.getElementById('settings-btn').onclick = () => toast('Settings page is on the roadmap.');
+
+/* ============================================================
+ *  INIT
+ * ============================================================ */
+function init() {
+  seedIfEmpty();
+  document.getElementById('today-date').textContent =
+    new Date().toLocaleDateString('en-IN', { weekday:'long', day:'2-digit', month:'long', year:'numeric' }).toUpperCase();
+
+  if (get(STORE.CAL_TOKEN, null)) document.getElementById('calendar-status').textContent = 'Calendar configured';
+
+  renderVerticalNav();
+  renderCountdowns();
+  renderMeetings();
+  renderTodoPills();
+  updateTodoCalLabel();
+  refreshAssigneeOptions();
+  renderTodos();
+  renderAssigned();
+
+  // Pull partner_tasks from Supabase so tasks created on the Partnership
+  // & Sales page also appear here. Renders again once data lands.
+  loadPartnerTasksFromSupabase();
+
+  // Re-tick countdowns each minute (keeps numbers fresh without reload)
+  setInterval(renderCountdowns, 60_000);
+}
+init();
+</script>
+</body>
+</html>
