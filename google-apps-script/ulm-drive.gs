@@ -31,7 +31,9 @@
  *
  * ── Deploy ────────────────────────────────────────────────────────────────
  * 1. script.google.com → New project → paste this file.
- * 2. Fill in CONFIG below (folder IDs from your Drive).
+ * 2. Set SHARED_TOKEN. The five folder IDs below are already the live
+ *    Elecbits ones; the three register ids are blank on purpose — read the
+ *    note on AUTO_CONVERT_REGISTERS before filling them in.
  * 3. Deploy → New deployment → Web app:
  *      Execute as: **Me**   ·   Who has access: **Anyone**
  *    ("Anyone" is required for the portal to reach it; SHARED_TOKEN is the
@@ -60,8 +62,8 @@ const CONFIG = {
   // Created on first use inside REGISTRY_FOLDER_ID if left blank.
   PCB_REGISTER_ID: "",
 
-  // Folder where the registers live (e.g. "Eb-Central-ULM").
-  REGISTRY_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+  // Folder where the registers live — "Eb-Central-ULM".
+  REGISTRY_FOLDER_ID: "1c35aKmV4TSclOcCwxPvf-2HsANLerRtc",
 
   // Your registers are probably uploaded .xlsx files. Apps Script cannot
   // append a row to an .xlsx — only to a Google Sheet. Leave this false and
@@ -75,17 +77,20 @@ const CONFIG = {
   // ── The two template trees, and where each replica goes ──────────────────
   // 1) The PROJECT-ID (PM) template folder — the project-management tree
   //    (Governance, MoM, R&D-PM sub-folders, SCS, handover, process map…).
-  PROJECT_TEMPLATE_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+  //    "01-Project-ID-Folder-PM-Template folder- 16-8-26"
+  PROJECT_TEMPLATE_FOLDER_ID: "1NOcKc9ZqPAyZQrs8cO0uxYNBtw1-c0dg",
 
-  // Where new PROJECT folders are created — the Project Management area.
-  PROJECTS_PARENT_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+  // Where new PROJECT folders are created:
+  //    …/Engineering Services/"Project Management - Project Managers"
+  PROJECTS_PARENT_FOLDER_ID: "1rf8apJsXqIjy9sKXp6sYjL9fTSfFoNyr",
 
-  // 2) The PCB-ID (engineering) template folder — the board-level tree
-  //    (Hardware / Firmware / Enclosure / DFx / Assembly…).
-  PCB_TEMPLATE_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+  // 2) The PCB-ID (engineering) template folder — the board-level tree.
+  //    "Eb-PCB & Firmware and Enclosure - template folder"
+  PCB_TEMPLATE_FOLDER_ID: "1LSGc7_m75CCCbKtdZceVnPGltIjBn5X1",
 
-  // Where new PCB folders are created — the engineering area.
-  PCB_PARENT_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+  // Where new PCB folders are created:
+  //    …/"PCB & Firmware - Engineers / Developers"/"Eb-PCB & Firmware and Enclosure"
+  PCB_PARENT_FOLDER_ID: "1CIyvqJd_FGN9if_YqBTAuQCHeEwkcmRz",
 
   // OPTIONAL: a separate eb-templates library of blank EB-T-nnn files. Leave
   // blank when the templates already live inside the template tree — the

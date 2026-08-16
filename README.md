@@ -113,13 +113,37 @@ switcher.
 
 1. [script.google.com](https://script.google.com) → New project → paste
    [`google-apps-script/ulm-drive.gs`](google-apps-script/ulm-drive.gs).
-2. Fill in `CONFIG`: a long random `SHARED_TOKEN`, plus the Drive IDs of:
-   - the registry folder (where the register sheets live),
-   - the **Project-ID (PM) template folder** and the **Project Management
-     parent** it replicates into,
-   - the **PCB-ID (engineering) template folder** and the **PCB & Firmware
-     parent** it replicates into,
-   - the **eb-templates library** (the 178 `EB-T-nnn` blanks).
+2. Set `SHARED_TOKEN` to a long random string. The five folder IDs are already
+   filled in with the live Elecbits folders:
+
+   | CONFIG key | Folder |
+   |---|---|
+   | `REGISTRY_FOLDER_ID` | Eb-Central-ULM |
+   | `PROJECT_TEMPLATE_FOLDER_ID` | 01-Project-ID-Folder-PM-Template folder- 16-8-26 |
+   | `PROJECTS_PARENT_FOLDER_ID` | Project Management - Project Managers |
+   | `PCB_TEMPLATE_FOLDER_ID` | Eb-PCB & Firmware and Enclosure - template folder |
+   | `PCB_PARENT_FOLDER_ID` | Eb-PCB & Firmware and Enclosure |
+
+   `TEMPLATES_LIBRARY_FOLDER_ID` stays blank: the `EB-T-nnn` files already sit
+   inside the template tree, so the process map links to the project's **own**
+   copies, which is what a PM actually wants to click.
+
+   **The registers need one decision.** `Eb-Client ID Sheet` and
+   `Eb-Centralised Project Tracking Sheet` are uploaded `.xlsx` files, and no
+   script can append a row to an `.xlsx` — only to a Google Sheet. So the
+   script refuses rather than touching your master. Pick one:
+   - open each → *File → Save as Google Sheets* → put the **new** file ids in
+     `CLIENT_REGISTER_ID` / `PROJECT_REGISTER_ID` (recommended), or
+   - set `AUTO_CONVERT_REGISTERS: true` and let it convert once (the `.xlsx`
+     is kept, parked in `99-Source-Files`), or
+   - leave the ids blank and it creates fresh registers in Eb-Central-ULM.
+
+   Rows are appended by **matching your existing header names** (with aliases,
+   e.g. "Company"/"Name of the Client" → Client Name), never by a fixed column
+   order, and columns the portal doesn't know about are left alone. Verify the
+   mapping before the first real project — it writes nothing:
+   `…/exec?action=registry.check&token=YOUR_TOKEN`, or **Integrations → Check
+   the registers** in the portal.
 3. Deploy → Web app → *Execute as: Me* · *Access: Anyone* → copy the `/exec`
    URL.
 4. Set:
