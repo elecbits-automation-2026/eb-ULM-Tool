@@ -9,11 +9,16 @@
  *                     Client-ID-Register sheet (the "backend file" for clients)
  *   project.register  allocate the next Project ID and append it to the
  *                     Project-ID-Register sheet (the "backend file" for projects)
- *   project.provision copy the project template folder, rename it to the
- *                     Project ID, then fill the process-map sheet inside the
- *                     new folder with links to the canonical templates that
- *                     live in the eb-templates library
- *   registry.list     read back either register (the portal's Clients page)
+ *   project.provision copy the PROJECT-ID (PM) template folder into the
+ *                     Project Management area, rename it to the Project ID,
+ *                     then fill the process-map sheet inside the new folder
+ *                     with links to the canonical templates that live in the
+ *                     eb-templates library
+ *   pcb.provision     copy the PCB-ID (engineering) template folder into the
+ *                     PCB & Firmware area, rename it to the PCB ID, and append
+ *                     the PCB-ID register (one project can have several boards,
+ *                     so this is called once per PCB ID)
+ *   registry.list     read back a register (clients | projects | pcbs)
  *
  * ── Deploy ────────────────────────────────────────────────────────────────
  * 1. script.google.com → New project → paste this file.
@@ -42,15 +47,29 @@ const CONFIG = {
   // Created on first use inside REGISTRY_FOLDER_ID if left blank.
   PROJECT_REGISTER_ID: "",
 
+  // Spreadsheet that holds the PCB-ID register (one row per board).
+  // Created on first use inside REGISTRY_FOLDER_ID if left blank.
+  PCB_REGISTER_ID: "",
+
   // Folder where the registers live (e.g. a "00-ULM-Backend" folder).
   REGISTRY_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
 
-  // The canonical project template folder that gets replicated per project
-  // (e.g. "1. Product ID_Template Folder").
+  // ── The two template trees, and where each replica goes ──────────────────
+  // 1) The PROJECT-ID (PM) template folder — the project-management tree
+  //    (MoM, R&D-PM sub-folders, SCS, process map…).
   PROJECT_TEMPLATE_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
 
-  // Where new project folders are created (e.g. "Eb-ODM Execution").
+  // Where new PROJECT folders are created — the Project Management area
+  // (e.g. …/Engineering Services/Project Management).
   PROJECTS_PARENT_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+
+  // 2) The PCB-ID (engineering) template folder — the board-level tree
+  //    (Hardware / Firmware / Enclosure / DFx / Assembly…).
+  PCB_TEMPLATE_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
+
+  // Where new PCB folders are created — the engineering area
+  // (e.g. …/PCB & Firmware - Engineers / Developers).
+  PCB_PARENT_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
 
   // The eb-templates library folder (holds the 178 EB-T-nnn template files).
   TEMPLATES_LIBRARY_FOLDER_ID: "REPLACE-WITH-FOLDER-ID",
@@ -67,6 +86,9 @@ const CLIENT_HEADERS = [
 const PROJECT_HEADERS = [
   "Project ID", "Project Name", "Client ID", "Client Name", "Kind",
   "Deadline", "Folder Link", "Created By", "Created At",
+];
+const PCB_HEADERS = [
+  "PCB ID", "Project ID", "Board Name", "Folder Link", "Created By", "Created At",
 ];
 
 /* ── entry points ─────────────────────────────────────────────────────────── */
@@ -95,6 +117,7 @@ function handle_(body) {
       case "client.register":   return json_(registerClient_(body));
       case "project.register":  return json_(registerProject_(body));
       case "project.provision": return json_(provisionProject_(body));
+      case "pcb.provision":     return json_(provisionPcb_(body));
       case "registry.list":     return json_(listRegistry_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
@@ -115,6 +138,8 @@ function ping_() {
   out.registryFolder  = tryName_(() => DriveApp.getFolderById(CONFIG.REGISTRY_FOLDER_ID).getName());
   out.templateFolder  = tryName_(() => DriveApp.getFolderById(CONFIG.PROJECT_TEMPLATE_FOLDER_ID).getName());
   out.projectsParent  = tryName_(() => DriveApp.getFolderById(CONFIG.PROJECTS_PARENT_FOLDER_ID).getName());
+  out.pcbTemplate     = tryName_(() => DriveApp.getFolderById(CONFIG.PCB_TEMPLATE_FOLDER_ID).getName());
+  out.pcbParent       = tryName_(() => DriveApp.getFolderById(CONFIG.PCB_PARENT_FOLDER_ID).getName());
   out.templateLibrary = tryName_(() => DriveApp.getFolderById(CONFIG.TEMPLATES_LIBRARY_FOLDER_ID).getName());
   return out;
 }
@@ -191,9 +216,9 @@ function nextSequentialId_(sheet, col, prefix, pad) {
 }
 
 function listRegistry_(b) {
-  const which = b.register === "clients" ? "CLIENT_REGISTER_ID" : "PROJECT_REGISTER_ID";
-  const title = b.register === "clients" ? "Client-ID-Register" : "Project-ID-Register";
-  const headers = b.register === "clients" ? CLIENT_HEADERS : PROJECT_HEADERS;
+  const which = b.register === "clients" ? "CLIENT_REGISTER_ID" : b.register === "pcbs" ? "PCB_REGISTER_ID" : "PROJECT_REGISTER_ID";
+  const title = b.register === "clients" ? "Client-ID-Register" : b.register === "pcbs" ? "PCB-ID-Register" : "Project-ID-Register";
+  const headers = b.register === "clients" ? CLIENT_HEADERS : b.register === "pcbs" ? PCB_HEADERS : PROJECT_HEADERS;
   const reg = register_(which, title, headers);
   const last = reg.sheet.getLastRow();
   const rows = last > 1
@@ -227,6 +252,46 @@ function provisionProject_(b) {
   return {
     ok: true, folderId: dest.getId(), folderUrl: dest.getUrl(),
     copied: count.files, folders: count.folders, processMap: processMap,
+  };
+}
+
+/* ── PCB provisioning — the engineering tree, one folder per board ─────────
+   A project can carry several boards, each with its own PCB ID (assigned at
+   process step 8, once the Designer LLD fixes the board count), so this is
+   called once per PCB ID. Copies the PCB template into the PCB & Firmware
+   area, renames it to the PCB ID, and appends the PCB-ID register.          */
+
+function provisionPcb_(b) {
+  if (!b.pcbId) return { ok: false, error: "pcbId is required" };
+  const template = DriveApp.getFolderById(CONFIG.PCB_TEMPLATE_FOLDER_ID);
+  const parent   = DriveApp.getFolderById(CONFIG.PCB_PARENT_FOLDER_ID);
+
+  const existing = parent.getFoldersByName(b.pcbId);
+  if (existing.hasNext()) {
+    const f = existing.next();
+    return { ok: true, alreadyExisted: true, folderId: f.getId(), folderUrl: f.getUrl(), copied: 0, folders: 0 };
+  }
+
+  const dest = parent.createFolder(b.pcbId);
+  const count = { files: 0, folders: 0 };
+  copyTree_(template, dest, count);
+
+  // Record the board in the PCB-ID register.
+  let registerUrl = "";
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const reg = register_("PCB_REGISTER_ID", "PCB-ID-Register", PCB_HEADERS);
+    reg.sheet.appendRow([
+      b.pcbId, b.projectId || "", b.boardName || "", dest.getUrl(),
+      b.by || "", new Date().toISOString(),
+    ]);
+    registerUrl = reg.ss.getUrl();
+  } finally { lock.releaseLock(); }
+
+  return {
+    ok: true, folderId: dest.getId(), folderUrl: dest.getUrl(),
+    copied: count.files, folders: count.folders, registerUrl: registerUrl,
   };
 }
 

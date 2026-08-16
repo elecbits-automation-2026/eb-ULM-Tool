@@ -45,9 +45,16 @@ export const driveRegisterClient = (client) => call("client.register", client);
 /** Register a project in the Drive register; returns { ok, projectId, registerUrl } */
 export const driveRegisterProject = (project) => call("project.register", project);
 
-/** Replicate the template folder for a project; returns
-    { ok, folderId, folderUrl, copied, folders, processMap:{updated, sheetUrl} } */
+/** Replicate the PROJECT-ID (PM) template folder into the Project Management
+    area; returns { ok, folderId, folderUrl, copied, folders,
+    processMap:{updated, sheetUrl} } */
 export const driveProvisionProject = (params) => call("project.provision", params);
 
-/** Read a register back: driveListRegistry("clients"|"projects") */
+/** Replicate the PCB-ID (engineering) template folder into the PCB & Firmware
+    area and append the PCB-ID register. Called once per board:
+    driveProvisionPcb({ pcbId, projectId, boardName, by }) →
+    { ok, folderId, folderUrl, copied, folders, registerUrl } */
+export const driveProvisionPcb = (params) => call("pcb.provision", params);
+
+/** Read a register back: driveListRegistry("clients"|"projects"|"pcbs") */
 export const driveListRegistry = (register) => call("registry.list", { register });

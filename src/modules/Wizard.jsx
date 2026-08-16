@@ -70,7 +70,7 @@ export default function WizardModule({ onOpenProject }) {
       case "lldsum": { const answered = LLD_QUESTIONS.filter((q) => d.lldAnswers[q.id] && d.lldAnswers[q.id] !== "TBD").length; d.lldC = { mode: "chat", answers: { ...d.lldAnswers }, text: composeLLDText(), fileName: "" }; await sys(`Customer LLD captured — **${answered}/${LLD_QUESTIONS.length} answered**, the rest marked TBD.`, "lldsumw"); break; }
       case "lldd": await sys("**Designer LLD** — the internal engineering spec, also a hard gate. Generate it from the customer LLD" + (aiEnabled ? " with AI" : " from the offline template") + ", or paste it manually.", "lldd"); break;
       case "review": await sys("**Review everything before it becomes real.**", "review"); break;
-      case "done": await sys("All set. The project is live in the portal — allocate more people or re-run Drive provisioning from its detail page any time.", "donew"); break;
+      case "done": await sys("All set. The project is live in the portal — allocate more people, add **PCB-ID folders** (one per board, into the PCB & Firmware area), or re-run Drive provisioning from its detail page any time.", "donew"); break;
       default: break;
     }
   }, [sys]);
@@ -454,7 +454,7 @@ export default function WizardModule({ onOpenProject }) {
           {gates.map(([g, ok]) => <Pill key={g} color={ok ? "var(--green)" : "var(--red)"}>{ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />} {g}</Pill>)}
         </div>
         <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.6 }}>
-          Create will: write the client &amp; project to the shared database, sanction the project as {kindOf(d.kind)?.label || "…"} through the one-door ulm.decide(), append both **registers in Drive**, replicate the **template folder** (renamed to the Project ID), and fill the **process-map sheet** with links to every template in the library.
+          Create will: write the client &amp; project to the shared database, sanction the project as {kindOf(d.kind)?.label || "…"} through the one-door ulm.decide(), append both **registers in Drive**, replicate the **Project-ID template folder into the Project Management area** (renamed to the Project ID), and fill the **process-map sheet** with links to every template in the library. PCB-ID folders (one per board, into PCB &amp; Firmware) are added from the project page once the board count is known.
         </div>
         <div><Btn disabled={!allOk || creating} icon={FolderOpen} onClick={() => runCreate(m.id)}>{creating ? "Creating…" : "Create & provision"}</Btn></div>
       </div>

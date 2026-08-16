@@ -8,7 +8,8 @@ import { Layers, Search, FolderOpen, Link2, ExternalLink, GitBranch, Users, Shie
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, AvatarDot, Field, Seg, Modal, Empty, SectionTitle, Section, KV, chipS, fmtDate, fmtDateTime, daysLeft } from "../ui.jsx";
 import { MONO, KINDS, kindOf, SANCTION_STATES, DECIDE_ACTIONS, TEAM_SLOTS, STATUSES } from "../constants.js";
-import { driveConfigured, driveRegisterProject, driveProvisionProject } from "../lib/ulmDrive.js";
+import { driveConfigured, driveRegisterProject, driveProvisionProject, driveProvisionPcb } from "../lib/ulmDrive.js";
+import { Cpu, Plus } from "lucide-react";
 
 function DecidePanel({ p, onDone }) {
   const { decide, toast, isAdmin } = useUlm();
@@ -144,6 +145,69 @@ export function ProvisioningCard({ p }) {
         driveConfigured
           ? <div><Btn small icon={busy ? RefreshCw : FolderOpen} onClick={run} disabled={busy}>{busy ? "Provisioning…" : "Provision now"}</Btn></div>
           : <Pill color="var(--amber)"><AlertTriangle size={11} /> Set VITE_ULM_DRIVE_URL to enable</Pill>
+      )}
+      <PcbFolders p={p} prov={prov} />
+    </div>
+  );
+}
+
+/* One project, several boards. Each PCB ID (assigned at process step 8, once
+   the Designer LLD fixes the board count) gets its own engineering folder,
+   replicated from the PCB template into the PCB & Firmware area. */
+function PcbFolders({ p, prov }) {
+  const { isAdmin, recordPcbFolder, toast, people, me } = useUlm();
+  const pcbs = prov?.pcbFolders || [];
+  const [adding, setAdding] = useState(false);
+  const [pcbId, setPcbId] = useState("");
+  const [board, setBoard] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const suggested = `${p.projectId}-PCB-${String(pcbs.length + 1).padStart(2, "0")}`;
+
+  const add = async () => {
+    const id = (pcbId.trim() || suggested).toUpperCase();
+    if (pcbs.some((x) => String(x.pcbId).toUpperCase() === id)) { toast(`PCB ID ${id} already has a folder`, "amber"); return; }
+    setBusy(true);
+    try {
+      let entry = { pcbId: id, boardName: board.trim() };
+      if (driveConfigured) {
+        const pv = await driveProvisionPcb({ pcbId: id, projectId: p.projectId, boardName: board.trim(), by: people.find((x) => x.id === me)?.name || "" });
+        if (!pv.ok) throw new Error(pv.error);
+        entry = { ...entry, folderUrl: pv.folderUrl, folderId: pv.folderId };
+        toast(`PCB folder ${id} ready — ${pv.copied ?? 0} files copied`, "green");
+      } else {
+        toast(`PCB folder ${id} recorded — Drive backend pending`, "amber");
+      }
+      await recordPcbFolder(p, entry);
+      setAdding(false); setPcbId(""); setBoard("");
+    } catch (e) { toast(`PCB provisioning failed: ${e.message}`, "red"); }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--bdr)", paddingTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--txt2)", textTransform: "uppercase", letterSpacing: ".06em", display: "inline-flex", alignItems: "center", gap: 6 }}><Cpu size={12} /> PCB folders — engineering area</span>
+        {isAdmin && !adding && <Btn small kind="ghost" icon={Plus} onClick={() => setAdding(true)}>Add board</Btn>}
+      </div>
+      {!pcbs.length && !adding && (
+        <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>No PCB folders yet. One board = one PCB ID = one folder in PCB &amp; Firmware, replicated from the PCB template.</span>
+      )}
+      {pcbs.map((x) => (
+        <div key={x.pcbId} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {x.folderUrl
+            ? <a href={x.folderUrl} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Pill color="var(--green)"><Cpu size={11} /> {x.pcbId} <ExternalLink size={10} /></Pill></a>
+            : <Pill color="var(--amber)"><Cpu size={11} /> {x.pcbId} · folder pending</Pill>}
+          {x.boardName && <span style={{ fontSize: 11.5, color: "var(--txt2)" }}>{x.boardName}</span>}
+        </div>
+      ))}
+      {adding && (
+        <div className="fade" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <input className="inp" style={{ fontFamily: MONO, maxWidth: 230 }} value={pcbId} onChange={(e) => setPcbId(e.target.value)} placeholder={suggested} />
+          <input className="inp" style={{ maxWidth: 180 }} value={board} onChange={(e) => setBoard(e.target.value)} placeholder="Board name (optional)" />
+          <Btn small onClick={add} disabled={busy}>{busy ? "Creating…" : "Create PCB folder"}</Btn>
+          <Btn small kind="ghost" onClick={() => setAdding(false)} disabled={busy}>Cancel</Btn>
+        </div>
       )}
     </div>
   );

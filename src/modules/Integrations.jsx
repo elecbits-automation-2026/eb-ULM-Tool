@@ -54,8 +54,10 @@ export default function IntegrationsModule() {
                 {ping.ok ? (
                   <>
                     <KV k="Registry folder" v={ping.registryFolder} />
-                    <KV k="Template folder" v={ping.templateFolder} />
-                    <KV k="Projects parent" v={ping.projectsParent} />
+                    <KV k="Project template (PM)" v={ping.templateFolder} />
+                    <KV k="Projects parent (PM)" v={ping.projectsParent} />
+                    <KV k="PCB template (engg)" v={ping.pcbTemplate} />
+                    <KV k="PCB parent (engg)" v={ping.pcbParent} />
                     <KV k="Template library" v={ping.templateLibrary} />
                   </>
                 ) : (

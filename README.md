@@ -65,9 +65,18 @@ npm run build    # production bundle in dist/
 | Client row | `core.orgs` (+ primary contact in `core.contacts`) |
 | Project row, born sanctioned & routed | `core.projects` via `ulm.portal_create_project` → `ulm.decide()` |
 | Team | `core.projects.team` jsonb **and** `core.assignments` rows (what `core.staffing` reads) |
-| **Template folder replicated**, renamed to the Project ID | Google Drive |
+| **Project-ID (PM) template folder replicated** into the Project Management area, renamed to the Project ID | Google Drive |
 | **Template links written into the process-map sheet** inside the new folder (matched by `EB-T-nnn` Template ID against the eb-templates library) | Google Drive |
 | Folder + process-map indexed | `core.documents`, `ulm.provisioning` |
+
+And per board, from the project page (PCB IDs are assigned once the Designer
+LLD fixes the board count — process step 8):
+
+| Step | Where |
+|---|---|
+| PCB ID appended to the **PCB-ID register** | Google Drive (backend file) |
+| **PCB-ID (engineering) template folder replicated** into the PCB & Firmware area, renamed to the PCB ID | Google Drive |
+| PCB folder recorded against the project | `ulm.provisioning.pcb_folders`, `core.documents` |
 
 Every Drive step degrades gracefully: unconfigured, it is recorded as a
 pending seam and can be retried from the project page once the backend is up.
@@ -104,10 +113,13 @@ switcher.
 
 1. [script.google.com](https://script.google.com) → New project → paste
    [`google-apps-script/ulm-drive.gs`](google-apps-script/ulm-drive.gs).
-2. Fill in `CONFIG`: a long random `SHARED_TOKEN`, plus the Drive IDs of the
-   registry folder, the **project template folder** (the one that gets
-   replicated per project), the parent folder where project folders live, and
-   the **eb-templates library** (the 178 `EB-T-nnn` blanks).
+2. Fill in `CONFIG`: a long random `SHARED_TOKEN`, plus the Drive IDs of:
+   - the registry folder (where the register sheets live),
+   - the **Project-ID (PM) template folder** and the **Project Management
+     parent** it replicates into,
+   - the **PCB-ID (engineering) template folder** and the **PCB & Firmware
+     parent** it replicates into,
+   - the **eb-templates library** (the 178 `EB-T-nnn` blanks).
 3. Deploy → Web app → *Execute as: Me* · *Access: Anyone* → copy the `/exec`
    URL.
 4. Set:

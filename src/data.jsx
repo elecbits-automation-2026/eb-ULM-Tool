@@ -115,7 +115,7 @@ const normOrg = (r, contacts) => ({
 
 const normEvent = (r) => ({ id: r.id, projectId: r.project_id, projectCode: r.project_code, action: r.action, fromState: r.from_state, toState: r.to_state, kind: r.kind, reason: r.reason || "", decidedBy: r.decided_by, decidedAt: r.decided_at });
 const normAlloc = (r) => ({ id: r.id, projectId: r.project_id, toolKey: r.tool_key, ownerId: r.owner_id, allocatedBy: r.allocated_by, allocatedAt: r.allocated_at, releasedAt: r.released_at, note: r.note || "" });
-const normProv = (r) => ({ projectId: r.project_id, projectCode: r.project_code, status: r.status, folderId: r.folder_id, folderUrl: r.folder_url || "", processMapUrl: r.process_map_url || "", templatesLinked: r.templates_linked, filesCopied: r.files_copied, foldersCopied: r.folders_copied, clientRegisterUrl: r.client_register_url || "", projectRegisterUrl: r.project_register_url || "", error: r.error || "", provisionedAt: r.provisioned_at });
+const normProv = (r) => ({ projectId: r.project_id, projectCode: r.project_code, status: r.status, folderId: r.folder_id, folderUrl: r.folder_url || "", processMapUrl: r.process_map_url || "", templatesLinked: r.templates_linked, filesCopied: r.files_copied, foldersCopied: r.folders_copied, clientRegisterUrl: r.client_register_url || "", projectRegisterUrl: r.project_register_url || "", error: r.error || "", provisionedAt: r.provisioned_at, pcbFolders: Array.isArray(r.pcb_folders) ? r.pcb_folders : [] });
 
 /* ── the provider ─────────────────────────────────────────────────────────── */
 
@@ -370,14 +370,29 @@ export function UlmProvider({ session, children }) {
     }
   }, [live, rpc, refresh]);
 
+  /* A PCB-ID folder was replicated into the engineering area for one board. */
+  const recordPcbFolder = useCallback(async (project, pcb) => {
+    if (live) {
+      await rpc("record_pcb_folder", { p_project: project.id, p_pcb_id: pcb.pcbId, p_folder_url: pcb.folderUrl || null, p_folder_id: pcb.folderId || null, p_board_name: pcb.boardName || null });
+      await refresh();
+    } else {
+      setData((d) => {
+        const cur = d.provisioning.find((x) => x.projectId === project.id) || { projectId: project.id, projectCode: project.projectId, status: "pending" };
+        const entry = { ...pcb, at: new Date().toISOString() };
+        const pcbFolders = [...(cur.pcbFolders || []).filter((x) => x.pcbId !== pcb.pcbId), entry];
+        return { ...d, provisioning: [...d.provisioning.filter((x) => x.projectId !== project.id), { ...cur, pcbFolders }] };
+      });
+    }
+  }, [live, rpc, refresh]);
+
   const ctx = useMemo(() => ({
     live, loading, loadError, refresh,
     people: people || [], me, setMe, my, realMe, isAdmin,
     ...data,
     toasts, toast,
     submitRequest, saveReview, acceptRequest, rejectRequest, decide,
-    createClient, createProject, setTeam, allocateOwner, saveProvisioning,
-  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, createProject, setTeam, allocateOwner, saveProvisioning]);
+    createClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder,
+  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder]);
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }

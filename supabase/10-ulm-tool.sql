@@ -67,6 +67,12 @@ create table if not exists ulm.provisioning (
   updated_at          timestamptz not null default now()
 );
 
+-- One project, several boards: each PCB-ID folder replicated into the
+-- engineering area is appended here as { pcbId, boardName, folderUrl,
+-- folderId, at }. (Additive — safe on an existing table.)
+alter table ulm.provisioning
+  add column if not exists pcb_folders jsonb not null default '[]'::jsonb;
+
 alter table ulm.provisioning enable row level security;
 do $$
 begin
@@ -395,6 +401,49 @@ begin
 end $$;
 
 
+-- A PCB-ID folder was replicated into the engineering area: append it to the
+-- project's provisioning row and index it in core.documents.
+create or replace function ulm.record_pcb_folder(
+  p_project    uuid,
+  p_pcb_id     text,
+  p_folder_url text default null,
+  p_folder_id  text default null,
+  p_board_name text default null
+) returns void
+language plpgsql security definer set search_path = ulm, core, public as $$
+declare v_by uuid; v_code text;
+begin
+  v_by := ulm.require_admin();
+  select project_id into v_code from core.projects where id = p_project;
+  if not found then raise exception 'no such project: %', p_project; end if;
+  if coalesce(trim(p_pcb_id), '') = '' then raise exception 'a PCB folder needs a PCB ID'; end if;
+
+  insert into ulm.provisioning as pv (project_id, project_code, status, pcb_folders, updated_at)
+  values (p_project, v_code, 'pending',
+          jsonb_build_array(jsonb_build_object(
+            'pcbId', p_pcb_id, 'boardName', p_board_name,
+            'folderUrl', p_folder_url, 'folderId', p_folder_id, 'at', now())),
+          now())
+  on conflict (project_id) do update set
+    pcb_folders = (
+      select coalesce(jsonb_agg(e), '[]'::jsonb)
+      from jsonb_array_elements(pv.pcb_folders) e
+      where e->>'pcbId' <> p_pcb_id
+    ) || jsonb_build_array(jsonb_build_object(
+           'pcbId', p_pcb_id, 'boardName', p_board_name,
+           'folderUrl', p_folder_url, 'folderId', p_folder_id, 'at', now())),
+    updated_at = now();
+
+  insert into core.documents (project_id, project_code, tool_key, kind, title, url, drive_id, uploaded_by)
+  select p_project, v_code, 'ulm', 'pcb-folder', p_pcb_id || ' — PCB folder', p_folder_url, p_folder_id, v_by
+  where not exists (select 1 from core.documents
+                    where project_id = p_project and kind = 'pcb-folder' and title like p_pcb_id || '%');
+
+  perform core.emit('ulm', 'project', p_project, 'pcb_folder_created', p_project, v_by,
+                    jsonb_build_object('pcb_id', p_pcb_id, 'folder', p_folder_url));
+end $$;
+
+
 -- ═══ 7. REVIEW WORKING — scores, risks, resource plan from the portal ══════
 -- These tables shipped read-only. The portal writes them, gated on the same
 -- admin check, through plain RLS policies (no wrapper needed — no state
@@ -435,7 +484,8 @@ grant execute on function
   ulm.portal_create_project(text,text,text,text,text,text,text,text,jsonb,date,jsonb,jsonb,jsonb,uuid,boolean,text),
   ulm.portal_set_team(uuid,jsonb),
   ulm.portal_allocate(uuid,uuid,text),
-  ulm.record_provisioning(uuid,text,text,text,text,int,int,int,text,text,text)
+  ulm.record_provisioning(uuid,text,text,text,text,int,int,int,text,text,text),
+  ulm.record_pcb_folder(uuid,text,text,text,text)
 to authenticated;
 
 revoke execute on function ulm.require_admin() from public;
