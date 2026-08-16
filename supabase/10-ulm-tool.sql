@@ -123,23 +123,53 @@ begin
 end $$;
 
 create or replace function ulm.portal_accept_request(
-  p_request  uuid,
-  p_kind     text,
-  p_code     text default null,
-  p_name     text default null,
-  p_deadline date default null,
-  p_note     text default null
+  p_request     uuid,
+  p_kind        text,
+  p_code        text default null,
+  p_name        text default null,
+  p_deadline    date default null,
+  p_note        text default null,
+  -- The four review scores, folded into the review row ulm.accept_request
+  -- writes, so one decision leaves exactly one row in the ledger.
+  p_feasibility int default null,
+  p_capacity    int default null,
+  p_commercial  int default null,
+  p_strategic   int default null
 ) returns core.projects
 language plpgsql security definer set search_path = ulm, core, sales, public as $$
-declare v_by uuid;
+declare v_by uuid; proj core.projects;
 begin
   v_by := ulm.require_admin();
-  return ulm.accept_request(p_request, p_kind, p_code, p_name, p_deadline, v_by, p_note);
+  proj := ulm.accept_request(p_request, p_kind, p_code, p_name, p_deadline, v_by, p_note);
+
+  -- ulm.accept_request does not set app_id (it predates this tool). Without
+  -- it, core.staffing's `p.app_id = ta.project_app_id` join never matches and
+  -- the team of an accepted project is invisible to HR, load and Finance.
+  if proj.app_id is null then
+    update core.projects set app_id = proj.project_id
+     where id = proj.id and app_id is null
+    returning * into proj;
+  end if;
+
+  -- Fold the scores into the review row accept_request just wrote, rather
+  -- than adding a second row for the same verdict.
+  update ulm.reviews
+     set feasibility = coalesce(p_feasibility, feasibility),
+         capacity    = coalesce(p_capacity,    capacity),
+         commercial  = coalesce(p_commercial,  commercial),
+         strategic   = coalesce(p_strategic,   strategic)
+   where request_id = p_request and project_id = proj.id;
+
+  return proj;
 end $$;
 
 create or replace function ulm.portal_reject_request(
-  p_request uuid,
-  p_note    text default null
+  p_request     uuid,
+  p_note        text default null,
+  p_feasibility int default null,
+  p_capacity    int default null,
+  p_commercial  int default null,
+  p_strategic   int default null
 ) returns void
 language plpgsql security definer set search_path = ulm, core, sales, public as $$
 declare v_by uuid; req core.intake;
@@ -150,8 +180,10 @@ begin
 
   perform sales.settle_request(p_request, 'rejected', null, p_note, v_by);
 
-  insert into ulm.reviews (request_id, proposed_kind, verdict, reviewed_by, reviewed_at, notes)
-  values (p_request, req.proposed_kind, 'reject', v_by, now(), p_note);
+  insert into ulm.reviews (request_id, proposed_kind, verdict, reviewed_by, reviewed_at,
+                           notes, feasibility, capacity, commercial, strategic)
+  values (p_request, req.proposed_kind, 'reject', v_by, now(),
+          p_note, p_feasibility, p_capacity, p_commercial, p_strategic);
 
   perform core.emit('ulm', 'request', p_request, 'rejected', null, v_by,
                     jsonb_build_object('note', p_note));
@@ -290,23 +322,35 @@ create or replace function ulm.portal_set_team(
   p_team    jsonb                          -- [{ slot, userId }]
 ) returns void
 language plpgsql security definer set search_path = core, ulm, public as $$
-declare v_by uuid; proj core.projects; r jsonb; v_uid uuid;
+declare v_by uuid; proj core.projects; r jsonb; v_uid uuid; v_app text; v_slot text;
 begin
   v_by := ulm.require_admin();
   select * into proj from core.projects where id = p_project;
   if not found then raise exception 'no such project: %', p_project; end if;
 
+  -- The join key core.staffing uses. A project accepted from a Sales request
+  -- may have no app_id, so fall back to the project code and backfill the
+  -- column — otherwise every assignment row here is invisible to that view.
+  v_app := coalesce(proj.app_id, proj.project_id);
+  if proj.app_id is null then
+    update core.projects set app_id = v_app where id = p_project;
+  end if;
+
   update core.projects set team = coalesce(p_team, '[]'::jsonb) where id = p_project;
 
-  delete from core.assignments where project_app_id = proj.app_id
-     or (proj.project_id is not null and app_id like proj.project_id || ':%');
+  -- Clear this project's rows by every key they could have been written under.
+  delete from core.assignments
+   where project_id = p_project
+      or (v_app is not null and project_app_id = v_app)
+      or (proj.project_id is not null and app_id like proj.project_id || ':%');
 
   for r in select * from jsonb_array_elements(coalesce(p_team, '[]'::jsonb)) loop
     if coalesce(r->>'userId', '') = '' then continue; end if;
     begin v_uid := (r->>'userId')::uuid; exception when others then v_uid := null; end;
-    insert into core.assignments (app_id, project_app_id, user_app_id, user_id, slot)
-    values (proj.project_id || ':' || (r->>'slot'), proj.app_id, r->>'userId', v_uid,
-            coalesce(r->>'slot', ''));
+    v_slot := coalesce(r->>'slot', '');
+    insert into core.assignments (app_id, project_app_id, project_id, user_app_id, user_id, slot)
+    values (coalesce(proj.project_id, v_app) || ':' || v_slot, v_app, p_project,
+            r->>'userId', v_uid, v_slot);
   end loop;
 end $$;
 
@@ -477,8 +521,8 @@ grant insert, update on ulm.reviews, ulm.risks, ulm.resource_plan, ulm.work_pack
 grant execute on function
   ulm.me(),
   ulm.portal_submit_request(text,text,text,uuid,int,date,numeric,text),
-  ulm.portal_accept_request(uuid,text,text,text,date,text),
-  ulm.portal_reject_request(uuid,text),
+  ulm.portal_accept_request(uuid,text,text,text,date,text,int,int,int,int),
+  ulm.portal_reject_request(uuid,text,int,int,int,int),
   ulm.portal_decide(uuid,text,text,text),
   ulm.portal_create_client(text,text,text,text,jsonb),
   ulm.portal_create_project(text,text,text,text,text,text,text,text,jsonb,date,jsonb,jsonb,jsonb,uuid,boolean,text),

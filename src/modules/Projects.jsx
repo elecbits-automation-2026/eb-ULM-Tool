@@ -99,16 +99,27 @@ export function ProvisioningCard({ p }) {
     setBusy(true);
     const next = { status: "provisioned" };
     try {
+      // Idempotent server-side: a retry re-uses the register row rather than
+      // appending a duplicate, and resumes a half-finished folder copy.
       const rp = await driveRegisterProject({ projectId: p.projectId, name: p.name, clientId: p.clientId, clientName: p.clientName, kind: p.kind, deadline: p.deadline, by: people.find((x) => x.id === me)?.name || "" });
       if (rp.ok) next.projectRegisterUrl = rp.registerUrl; else throw new Error(rp.error);
-      const pv = await driveProvisionProject({ projectId: p.projectId });
+
+      const pv = await driveProvisionProject({ projectId: p.projectId },
+        (round) => toast(`Still copying — ${round.copied} files so far…`, "blue"));
       if (!pv.ok) throw new Error(pv.error);
+
       next.folderId = pv.folderId; next.folderUrl = pv.folderUrl;
-      next.filesCopied = pv.copied; next.foldersCopied = pv.folders;
-      next.processMapUrl = pv.processMap?.sheetUrl || "";
-      next.templatesLinked = pv.processMap?.updated ?? null;
+      // A folder that was already complete reports 0 copied; keep whatever
+      // count we recorded the first time rather than overwriting it with 0.
+      if (!pv.alreadyComplete || prov?.filesCopied == null) {
+        next.filesCopied = pv.copied; next.foldersCopied = pv.folders;
+      }
+      next.processMapUrl = pv.processMap?.sheetUrl || prov?.processMapUrl || "";
+      next.templatesLinked = pv.processMap?.updated ?? prov?.templatesLinked ?? null;
       await saveProvisioning(p, next);
-      toast(`Drive folder for ${p.projectId} ready`, "green");
+      toast(pv.alreadyComplete
+        ? `Folder for ${p.projectId} was already in place`
+        : `Drive folder for ${p.projectId} ready — ${pv.copied} files copied`, "green");
     } catch (e) {
       await saveProvisioning(p, { status: "failed", error: e.message }).catch(() => { });
       toast(`Provisioning failed: ${e.message}`, "red");

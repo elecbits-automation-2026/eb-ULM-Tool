@@ -7,7 +7,7 @@ import { Database, FolderOpen, Sparkles, CheckCircle2, AlertTriangle, RefreshCw 
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, Section, SectionTitle, KV } from "../ui.jsx";
 import { supabaseEnabled, supabaseUrl } from "../lib/supabase.js";
-import { driveConfigured, drivePing } from "../lib/ulmDrive.js";
+import { driveConfigured, drivePing, driveCheckRegisters } from "../lib/ulmDrive.js";
 import { aiEnabled } from "../lib/ai.js";
 
 const Light = ({ on, warn }) => (
@@ -19,11 +19,17 @@ const Light = ({ on, warn }) => (
 export default function IntegrationsModule() {
   const { live } = useUlm();
   const [ping, setPing] = useState(null);
+  const [regs, setRegs] = useState(null);
   const [busy, setBusy] = useState(false);
 
   const doPing = async () => {
     setBusy(true);
     setPing(await drivePing());
+    setBusy(false);
+  };
+  const doCheck = async () => {
+    setBusy(true);
+    setRegs(await driveCheckRegisters());
     setBusy(false);
   };
 
@@ -48,7 +54,35 @@ export default function IntegrationsModule() {
         </div>
         {driveConfigured && (
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-            <div><Btn small icon={RefreshCw} onClick={doPing} disabled={busy}>{busy ? "Pinging…" : "Test the connection"}</Btn></div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Btn small icon={RefreshCw} onClick={doPing} disabled={busy}>{busy ? "Working…" : "Test the connection"}</Btn>
+              <Btn small kind="ghost" icon={CheckCircle2} onClick={doCheck} disabled={busy}>Check the registers</Btn>
+            </div>
+            {regs && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {Object.entries(regs.registers || {}).map(([k, r]) => (
+                  <div key={k} className="card" style={{ padding: 12 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                      <span style={{ fontWeight: 700, fontSize: 12.5 }}>{r.file || k}</span>
+                      <Pill color={String(r.status).startsWith("⚠") ? "var(--red)" : "var(--green)"}>{r.status}</Pill>
+                    </div>
+                    {r.rows != null && <div style={{ fontSize: 11.5, color: "var(--txt2)" }}>{r.rows} existing rows · header on row {r.headerRow}</div>}
+                    {r.mapped && Object.keys(r.mapped).length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--txt2)", marginTop: 6, lineHeight: 1.7 }}>
+                        {Object.entries(r.mapped).map(([f, col]) => (
+                          <div key={f}><b style={{ color: "var(--txt)" }}>{f}</b> → “{col}”</div>
+                        ))}
+                      </div>
+                    )}
+                    {r.unmapped?.length > 0 && (
+                      <div style={{ fontSize: 11.5, color: "var(--amber)", marginTop: 6 }}>
+                        No column for: {r.unmapped.join(", ")} — those values are simply not written.
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
             {ping && (
               <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                 {ping.ok ? (

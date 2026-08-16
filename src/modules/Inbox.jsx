@@ -39,12 +39,14 @@ function ReviewModal({ req, onClose }) {
   const [err, setErr] = useState("");
   const submitter = people.find((p) => p.id === req.submittedBy);
 
+  /* The scores travel INTO the decision RPC, which folds them into the single
+     review row it writes. Writing a second row from the browser would double
+     every decision in the ledger — and orphan one if the RPC then failed. */
   const doAccept = async () => {
     if (!kind) { setErr("Pick a delivery route first — sanction requires a kind."); return; }
     setBusy(true); setErr("");
     try {
-      await saveReview({ requestId: req.id, kind, ...scores, notes, verdict: "accept" });
-      await acceptRequest(req, { kind, code: code.trim() || null, name: name.trim() || null, deadline: deadline || null, note: notes || null });
+      await acceptRequest(req, { kind, code: code.trim() || null, name: name.trim() || null, deadline: deadline || null, note: notes || null, scores });
       toast(`Request accepted — project sanctioned as ${kindOf(kind)?.label}`, "green");
       onClose();
     } catch (e) { setErr(e.message); }
@@ -53,8 +55,7 @@ function ReviewModal({ req, onClose }) {
   const doReject = async () => {
     setBusy(true); setErr("");
     try {
-      await saveReview({ requestId: req.id, kind: kind || req.kind, ...scores, notes, verdict: "reject" });
-      await rejectRequest(req, notes || null);
+      await rejectRequest(req, notes || null, scores);
       toast("Request rejected", "amber");
       onClose();
     } catch (e) { setErr(e.message); }

@@ -271,25 +271,43 @@ export function UlmProvider({ session, children }) {
     }
   }, [live, me, realMe]);
 
-  const acceptRequest = useCallback(async (req, { kind, code, name, deadline, note }) => {
+  const acceptRequest = useCallback(async (req, { kind, code, name, deadline, note, scores }) => {
     if (live) {
-      await rpc("portal_accept_request", { p_request: req.id, p_kind: kind, p_code: code || null, p_name: name || null, p_deadline: deadline || null, p_note: note || null });
+      await rpc("portal_accept_request", {
+        p_request: req.id, p_kind: kind, p_code: code || null, p_name: name || null,
+        p_deadline: deadline || null, p_note: note || null,
+        p_feasibility: scores?.feasibility ?? null, p_capacity: scores?.capacity ?? null,
+        p_commercial: scores?.commercial ?? null, p_strategic: scores?.strategic ?? null,
+      });
       await refresh();
       return null;
     }
     const projectId = code || `EbZ-REQ-${String(data.projects.length + 1).padStart(2, "0")}`;
     const proj = { id: uid(), projectId, appId: projectId, idMode: code ? "manual" : "auto", name: name || req.title, desc: req.summary, clientId: data.orgs.find((o) => o.id === req.orgId)?.clientId || "", clientName: req.orgName, industry: "", orgSize: "", contact: {}, deadline: deadline || req.targetDate || "", status: "Planning", team: [], kind, sanctionState: "requested", requestedAt: req.submittedAt, createdAt: new Date().toISOString(), createdBy: me, lldCustomer: null, lldDesigner: null };
-    setData((d) => ({ ...d, projects: [proj, ...d.projects], requests: d.requests.map((r) => (r.id === req.id ? { ...r, status: "accepted", projectId: proj.id, decidedAt: new Date().toISOString(), decidedBy: me, decisionNote: note || "" } : r)) }));
+    setData((d) => ({
+      ...d,
+      projects: [proj, ...d.projects],
+      requests: d.requests.map((r) => (r.id === req.id ? { ...r, status: "accepted", projectId: proj.id, decidedAt: new Date().toISOString(), decidedBy: me, decisionNote: note || "" } : r)),
+      reviews: [{ id: uid(), requestId: req.id, projectId: proj.id, projectCode: proj.projectId, kind, ...(scores || {}), notes: note || "", verdict: "accept", reviewedBy: me, createdAt: new Date().toISOString() }, ...d.reviews],
+    }));
     demoDecide(proj, "sanction", kind, note || `accepted from request ${req.id}`, me);
     return proj;
   }, [live, rpc, refresh, data, me]);
 
-  const rejectRequest = useCallback(async (req, note) => {
+  const rejectRequest = useCallback(async (req, note, scores) => {
     if (live) {
-      await rpc("portal_reject_request", { p_request: req.id, p_note: note || null });
+      await rpc("portal_reject_request", {
+        p_request: req.id, p_note: note || null,
+        p_feasibility: scores?.feasibility ?? null, p_capacity: scores?.capacity ?? null,
+        p_commercial: scores?.commercial ?? null, p_strategic: scores?.strategic ?? null,
+      });
       await refresh();
     } else {
-      setData((d) => ({ ...d, requests: d.requests.map((r) => (r.id === req.id ? { ...r, status: "rejected", decidedAt: new Date().toISOString(), decidedBy: me, decisionNote: note || "" } : r)) }));
+      setData((d) => ({
+        ...d,
+        requests: d.requests.map((r) => (r.id === req.id ? { ...r, status: "rejected", decidedAt: new Date().toISOString(), decidedBy: me, decisionNote: note || "" } : r)),
+        reviews: [{ id: uid(), requestId: req.id, kind: req.kind, ...(scores || {}), notes: note || "", verdict: "reject", reviewedBy: me, createdAt: new Date().toISOString() }, ...d.reviews],
+      }));
     }
   }, [live, rpc, refresh, me]);
 

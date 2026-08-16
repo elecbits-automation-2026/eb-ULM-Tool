@@ -39,22 +39,49 @@ async function call(action, params = {}) {
 
 export const drivePing = () => call("ping");
 
+/** Dry run over the registers: which columns this tool's fields map onto in
+    whatever layout those sheets already have. Writes nothing. */
+export const driveCheckRegisters = () => call("registry.check");
+
 /** Register a client in the Drive register; returns { ok, clientId, registerUrl } */
 export const driveRegisterClient = (client) => call("client.register", client);
 
 /** Register a project in the Drive register; returns { ok, projectId, registerUrl } */
 export const driveRegisterProject = (project) => call("project.register", project);
 
+/* A big template tree can outlast one Apps Script request (~6 min cap). The
+   backend then answers done:false having copied what it could; calling again
+   resumes where it stopped. This drives that loop and adds the rounds up, so
+   callers just await one promise. */
+async function provisionLoop(action, params, onProgress) {
+  let total = { copied: 0, folders: 0, skipped: 0 };
+  for (let round = 1; round <= 10; round++) {
+    const res = await call(action, params);
+    if (!res.ok) return res;
+    total = {
+      copied: total.copied + (res.copied || 0),
+      folders: total.folders + (res.folders || 0),
+      skipped: total.skipped + (res.skipped || 0),
+    };
+    if (res.done !== false) return { ...res, ...total, rounds: round };
+    onProgress?.({ ...res, ...total, round });
+  }
+  return { ok: false, error: "Folder is unusually large — provisioning did not finish in 10 rounds. Run it again to continue where it stopped." };
+}
+
 /** Replicate the PROJECT-ID (PM) template folder into the Project Management
     area; returns { ok, folderId, folderUrl, copied, folders,
-    processMap:{updated, sheetUrl} } */
-export const driveProvisionProject = (params) => call("project.provision", params);
+    processMap:{updated, sheetUrl} }. Resumes automatically if the copy needs
+    more than one request. */
+export const driveProvisionProject = (params, onProgress) =>
+  provisionLoop("project.provision", params, onProgress);
 
 /** Replicate the PCB-ID (engineering) template folder into the PCB & Firmware
     area and append the PCB-ID register. Called once per board:
     driveProvisionPcb({ pcbId, projectId, boardName, by }) →
     { ok, folderId, folderUrl, copied, folders, registerUrl } */
-export const driveProvisionPcb = (params) => call("pcb.provision", params);
+export const driveProvisionPcb = (params, onProgress) =>
+  provisionLoop("pcb.provision", params, onProgress);
 
 /** Read a register back: driveListRegistry("clients"|"projects"|"pcbs") */
 export const driveListRegistry = (register) => call("registry.list", { register });
