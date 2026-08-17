@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Inbox, FolderPlus, Layers, Users, Building2, PlugZap, Shield, Sun, Moon,
-  Loader2, ArrowRight, LogOut, RefreshCw, CheckCircle2, AlertTriangle,
+  Loader2, ArrowRight, LogOut, RefreshCw, CheckCircle2, AlertTriangle, Sparkles,
 } from "lucide-react";
 import elecbitsLogo from "./assets/elecbits-logo.jpg";
 import { supabaseConfigured, supabaseEnabled, supabaseInitError, supabaseUrl } from "./lib/supabase.js";
@@ -28,12 +28,14 @@ import ProjectsModule from "./modules/Projects.jsx";
 import AllocationModule from "./modules/Allocation.jsx";
 import ClientsModule from "./modules/Clients.jsx";
 import IntegrationsModule from "./modules/Integrations.jsx";
+import AssistantModule from "./modules/Assistant.jsx";
 
 const NAV_GROUPS = [
   ["ULM", [
     { id: "inbox", label: "Sanction Inbox", icon: Inbox },
     { id: "create", label: "Create a Project", icon: FolderPlus, admin: true },
     { id: "projects", label: "Projects", icon: Layers },
+    { id: "assistant", label: "Assistant", icon: Sparkles, admin: true },
   ]],
   ["People", [
     { id: "alloc", label: "Allocation", icon: Users },
@@ -54,6 +56,7 @@ const TITLES = {
   alloc: ["Allocation", "Hand sanctioned projects to their delivery owner"],
   clients: ["Clients", "The shared client table and the Drive-side register"],
   integrations: ["Integrations", "Supabase · Drive · AI — every seam, visible"],
+  assistant: ["Assistant", "Claude with Drive hands — search, read, draft docs"],
 };
 
 const Shell = ({ dark, children }) => (
@@ -295,6 +298,7 @@ function AppBody({ dark, setDark, session }) {
           {view === "alloc" && <AllocationModule onOpenProject={openProject} />}
           {view === "clients" && <ClientsModule />}
           {view === "integrations" && <IntegrationsModule />}
+          {view === "assistant" && <AssistantModule />}
         </div>
       </main>
 

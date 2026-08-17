@@ -101,3 +101,9 @@ export const driveSearchClients = (q) => call("clients.search", { q });
     driveAi({ prompt, system?, maxTokens?, effort?, schema? }) →
     { ok, text, json?, model, stopReason, usage } */
 export const driveAi = (params) => call("ai.chat", params);
+
+/** Claude with Drive hands — the agentic loop (search / read / write / list /
+    registers) runs server-side in the web app.
+    driveAiAgent({ messages: [{role, content}…] }) →
+    { ok, text, trace: [{tool, detail, ok}…], rounds, partial? } */
+export const driveAiAgent = (params) => call("ai.agent", params);

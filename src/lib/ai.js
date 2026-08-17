@@ -119,6 +119,49 @@ export async function readClientMessage(text) {
   );
 }
 
+/* 1b. The conversational layer — every typed message, understood ───────────
+   The wizard is a state machine with a pending question at each step. This
+   reads one user message against that pending question and says what it was:
+   a direct answer, one of the offered options, a question to answer, or just
+   chat. The wizard applies answers/picks and speaks the reply for the rest —
+   which is what makes typing at any step feel like talking to Claude.       */
+export async function interpretMessage({ step, question, options, date, data, message }) {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["kind", "value", "reply"],
+    properties: {
+      kind: {
+        type: "string", enum: ["answer", "pick", "question", "chat"],
+        description: "pick = it maps onto one of the OPTIONS; answer = it answers the pending question directly; question = they are asking something; chat = greeting / aside / intent with no usable content",
+      },
+      value: {
+        type: ["string", "null"],
+        description: date
+          ? "kind=answer: the date they mean as YYYY-MM-DD, resolved against today's date given in the prompt. Otherwise null."
+          : options
+            ? "kind=pick: exactly one code from OPTIONS, verbatim. Otherwise null."
+            : "kind=answer: the answer, cleaned of filler (\"we're calling it Falcon\" → \"Falcon\"). Otherwise null.",
+      },
+      reply: {
+        type: "string",
+        description: "kind=question/chat: the genuinely helpful reply — answer with real electronics-industry knowledge, under 60 words, ending by steering back to the pending question. kind=answer/pick: one short confirmation, under 12 words.",
+      },
+    },
+  };
+  const optBlock = options?.length
+    ? `\nOPTIONS\n${options.map((o) => `${o.code} = ${o.label}`).join("\n")}`
+    : "";
+  const today = new Date().toISOString().slice(0, 10);
+  return claude(
+    `You are mid-conversation in Elecbits' project-creation wizard.\nToday: ${today}\nCollected so far: ${data || "nothing yet"}\nPending question (step "${step}"): ${question}${optBlock}\n\nThe user typed:\n"""${String(message || "").slice(0, 600)}"""`,
+    {
+      system: "You are the Elecbits ULM assistant, guiding an admin through creating & sanctioning an electronics project (ODM / box build / product). Warm, sharp, brief — like Claude. Use real domain knowledge (manufacturing, PCBs, certification, timelines) when they ask questions. Never invent register data, client records or IDs — those come from Drive, not you.",
+      schema, maxTokens: 800, effort: "low",
+    },
+  );
+}
+
 /* 2. Guessing the two ID codes so nobody scans 42 chips ────────────────────
    The industry and org-size codes are what the Client ID is built from, so a
    good guess up front saves the real work: the user still confirms.         */

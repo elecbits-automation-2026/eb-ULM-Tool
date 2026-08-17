@@ -162,10 +162,23 @@ Template ID.
 
 ### 3. Claude — the wizard's brain (optional)
 
-Four places get smarter with AI on: the client step understands sentences
-("check if hitachi exists?" → looks up *Hitachi*), the industry / org-size
-codes are suggested from the company name, a pasted client brief is fanned out
-across the 21-question customer LLD, and the Designer LLD is drafted from it.
+With AI on, the wizard is genuinely conversational — every typed message is
+read by Claude against the pending step, so greetings, questions and answers
+in your own words all land sensibly ("they're a small startup" picks the org
+size; "which route is for assembly-only?" gets a real answer). On top of
+that: industry/org-size suggestions from the company name, a pasted client
+brief fanned out across the 21-question customer LLD, and the Designer LLD
+drafted with full project context. The wizard header shows a **Claude on/off**
+pill with the reason, so a mis-configured backend is never silent.
+
+The **Assistant** page (admin-only) is Claude with Drive hands: an agentic
+tool loop running server-side in the web app — `drive_search`, `drive_list`,
+`drive_read` (Docs/Sheets/text), `drive_write` (Google Docs) and
+`register_read`. Ask it to find a project's LLD, summarise a process map, or
+draft kickoff notes straight into the project folder; every tool call is shown
+under the reply. First run after updating the script asks for one extra
+Google permission (Docs) — approve it once.
+
 Everything still works without AI — templates and manual entry take over.
 
 The key never ships to the browser. Two server-side routes, either works:
@@ -197,7 +210,7 @@ src/
   data.jsx           data layer: Supabase (rpc wrappers) ⇄ seeded demo mode
   ui.jsx             the design system (verbatim from the ODM app)
   constants.js       theme, ID code tables, slots, kinds, LLD questionnaire
-  modules/           Inbox · Wizard · Projects · Allocation · Clients · Integrations
+  modules/           Inbox · Wizard · Projects · Allocation · Clients · Assistant · Integrations
   lib/
     supabase.js      client init (same robust env handling as the ODM app)
     tables.js        logical-name → schema.table map (+ ulm.* additions)

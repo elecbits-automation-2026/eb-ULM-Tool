@@ -21,6 +21,10 @@
  *   ai.chat           ask Claude — the portal's chat brain. The Anthropic key
  *                     lives in Script Properties, so it never reaches the
  *                     browser bundle (see the AI section further down).
+ *   ai.agent          Claude with Drive hands: an agentic tool-use loop that
+ *                     can search Drive, read Docs/Sheets, write Docs, list
+ *                     folders and read the registers — all as this script's
+ *                     owner account, gated by the same SHARED_TOKEN.
  *
  * ── Two things worth knowing ──────────────────────────────────────────────
  * 1. RESUMABLE. A copy that dies half way (Apps Script caps a request at ~6
@@ -189,6 +193,7 @@ function handle_(body) {
       case "pcb.provision":     return json_(provisionPcb_(body));
       case "registry.list":     return json_(listRegistry_(body));
       case "ai.chat":           return json_(aiChat_(body));
+      case "ai.agent":          return json_(aiAgent_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -433,30 +438,9 @@ function aiChat_(b) {
   if (b.system) payload.system = String(b.system);
   if (b.schema) payload.output_config.format = { type: "json_schema", schema: b.schema };
 
-  let res;
-  try {
-    res = UrlFetchApp.fetch("https://api.anthropic.com/v1/messages", {
-      method: "post",
-      contentType: "application/json",
-      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
-      payload: JSON.stringify(payload),
-      muteHttpExceptions: true,
-    });
-  } catch (e) {
-    return { ok: false, error: "Could not reach Anthropic: " + String(e && e.message || e) };
-  }
-
-  const code = res.getResponseCode();
-  const raw = res.getContentText() || "";
-  let body = null;
-  try { body = JSON.parse(raw); } catch (e) { /* handled below */ }
-
-  if (code !== 200 || !body) {
-    const msg = (body && body.error && body.error.message) || raw.slice(0, 300) || "no body";
-    if (code === 401) return { ok: false, error: "Anthropic rejected the API key (401). " + AI_SETUP_HINT };
-    if (code === 429) return { ok: false, error: "Anthropic rate limit hit (429) — try again in a moment." };
-    return { ok: false, error: "Anthropic HTTP " + code + ": " + msg };
-  }
+  const r = anthropicFetch_(key, payload);
+  if (r.error) return { ok: false, error: r.error };
+  const body = r.body;
   // A safety decline arrives as HTTP 200 with no usable content — check it
   // before reading the content array.
   if (body.stop_reason === "refusal") {
@@ -479,10 +463,284 @@ function aiChat_(b) {
   return out;
 }
 
+/** One Messages-API round trip; both ai.chat and the agent loop go through
+    here so error handling lives in one place. */
+function anthropicFetch_(key, payload) {
+  let res;
+  try {
+    res = UrlFetchApp.fetch("https://api.anthropic.com/v1/messages", {
+      method: "post",
+      contentType: "application/json",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+  } catch (e) {
+    return { error: "Could not reach Anthropic: " + String(e && e.message || e) };
+  }
+  const code = res.getResponseCode();
+  const raw = res.getContentText() || "";
+  let body = null;
+  try { body = JSON.parse(raw); } catch (e) { /* handled below */ }
+  if (code !== 200 || !body) {
+    const msg = (body && body.error && body.error.message) || raw.slice(0, 300) || "no body";
+    if (code === 401) return { error: "Anthropic rejected the API key (401). " + AI_SETUP_HINT };
+    if (code === 429) return { error: "Anthropic rate limit hit (429) — try again in a moment." };
+    return { error: "Anthropic HTTP " + code + ": " + msg };
+  }
+  return { body: body };
+}
+
 /** Run this from the editor once to prove the key works. */
 function testAnthropic() {
   const r = aiChat_({ prompt: "Reply with the single word: ready", maxTokens: 256, effort: "low" });
   Logger.log(JSON.stringify(r, null, 2));
+}
+
+
+/* ── Claude with Drive hands — the agentic loop ────────────────────────────
+   ai.agent gives Claude five TOOLS and loops until it stops asking for them:
+   search Drive, list a folder, read a file (Docs / Sheets / text), write a
+   Google Doc, and read the ID registers. Everything runs as this script's
+   owner, so the assistant sees exactly what the admin account sees — the
+   SHARED_TOKEN on the request is what keeps it portal-only.
+
+   REQUEST  { action:"ai.agent", messages:[{role,content}…] | prompt, effort? }
+   RESPONSE { ok:true, text, trace:[{tool,detail,ok}…], rounds, usage }
+
+   NOTE the first run after pasting this version asks for one more Google
+   permission (Docs access) — approve it once and it never asks again.       */
+
+const AI_TOOLS = [
+  {
+    name: "drive_search",
+    description: "Search Google Drive by file name and by full text. Returns up to maxResults files with fileId, name, mimeType, url, folder and modified time. Use short distinctive queries (a project id like 'EbX-22-PL-03-47', a doc name fragment).",
+    input_schema: { type: "object", properties: {
+      query: { type: "string", description: "The search text" },
+      maxResults: { type: "integer", description: "Max files to return, default 10, cap 20" },
+    }, required: ["query"] },
+  },
+  {
+    name: "drive_list",
+    description: "List the sub-folders and files directly inside one Drive folder.",
+    input_schema: { type: "object", properties: {
+      folderId: { type: "string", description: "The folder's id" },
+    }, required: ["folderId"] },
+  },
+  {
+    name: "drive_read",
+    description: "Read a file's content as text. Google Docs → body text; Google Sheets → up to 5 tabs, 200 rows each, tab-separated; text/csv/json → raw. Binary files return metadata only.",
+    input_schema: { type: "object", properties: {
+      fileId: { type: "string" },
+      maxChars: { type: "integer", description: "Content cap, default 20000, max 50000" },
+    }, required: ["fileId"] },
+  },
+  {
+    name: "drive_write",
+    description: "Write a Google Doc. Give fileId to update an existing Doc (mode 'append' adds at the end — the default; 'replace' overwrites the whole body, use only when asked to rewrite). Or give title (+ folderId) to create a new Doc. Returns the doc's url.",
+    input_schema: { type: "object", properties: {
+      fileId: { type: "string", description: "Existing Doc to update" },
+      mode: { type: "string", enum: ["append", "replace"] },
+      title: { type: "string", description: "Name for a new Doc" },
+      folderId: { type: "string", description: "Where to create the new Doc — use the project's folder when the doc belongs to a project" },
+      content: { type: "string", description: "The text to write" },
+    }, required: ["content"] },
+  },
+  {
+    name: "register_read",
+    description: "Read one of the Elecbits ID registers as rows: 'clients' (client ids/names), 'projects' (project ids), 'pcbs' (board SKUs). This is the source of truth for IDs — use it instead of hunting the sheets by hand.",
+    input_schema: { type: "object", properties: {
+      register: { type: "string", enum: ["clients", "projects", "pcbs"] },
+    }, required: ["register"] },
+  },
+];
+
+function agentSystem_() {
+  return [
+    "You are the Elecbits ULM assistant with live Google Drive access through tools. Elecbits is an Indian electronics ODM; this Drive holds its client/project registers, project-management folders and PCB & firmware folders.",
+    "Known anchor folders (use drive_list to explore them):",
+    "- Registry (ID registers live here): " + CONFIG.REGISTRY_FOLDER_ID,
+    "- Project Management area (one folder per Project ID): " + CONFIG.PROJECTS_PARENT_FOLDER_ID,
+    "- PCB & Firmware area (one folder per PCB ID): " + CONFIG.PCB_PARENT_FOLDER_ID,
+    "- Project template tree: " + CONFIG.PROJECT_TEMPLATE_FOLDER_ID + " · PCB template tree: " + CONFIG.PCB_TEMPLATE_FOLDER_ID,
+    "Ways of working: find a project's folder by searching its Project ID. Use register_read for anything about IDs, clients or projects before searching raw files. When you create or edit a doc, put it in the right project folder and ALWAYS give the user the link. Never overwrite a doc body (mode replace) unless the user asked for a rewrite. Be concise; answer in short paragraphs or tight lists; links inline.",
+  ].join("\n");
+}
+
+function aiAgent_(b) {
+  const key = anthropicKey_();
+  if (!key) return { ok: false, error: AI_SETUP_HINT };
+
+  let messages = Array.isArray(b.messages) && b.messages.length
+    ? b.messages.slice(-20).map(function (m) {
+        // History from the browser is text only — content blocks (tool_use etc.)
+        // are minted exclusively inside this loop.
+        return { role: m.role === "assistant" ? "assistant" : "user",
+                 content: String(typeof m.content === "string" ? m.content : "").slice(0, 8000) || "…" };
+      })
+    : b.prompt ? [{ role: "user", content: String(b.prompt) }] : null;
+  if (!messages) return { ok: false, error: "ai.agent needs messages or a prompt" };
+
+  const trace = [];
+  let usage = { input_tokens: 0, output_tokens: 0 };
+
+  for (let round = 1; round <= 8; round++) {
+    const r = anthropicFetch_(key, {
+      model: String(b.model || CONFIG.AI_MODEL),
+      max_tokens: 8000,
+      thinking: { type: "adaptive" },
+      output_config: { effort: String(b.effort || "medium") },
+      system: agentSystem_(),
+      tools: AI_TOOLS,
+      messages: messages,
+    });
+    if (r.error) return { ok: false, error: r.error, trace: trace };
+    const body = r.body;
+    if (body.usage) {
+      usage.input_tokens += body.usage.input_tokens || 0;
+      usage.output_tokens += body.usage.output_tokens || 0;
+    }
+    if (body.stop_reason === "refusal") {
+      return { ok: false, refusal: true, error: "Claude declined this request.", trace: trace };
+    }
+
+    const toolUses = (body.content || []).filter(function (c) { return c.type === "tool_use"; });
+    const text = (body.content || []).filter(function (c) { return c.type === "text"; })
+      .map(function (c) { return c.text || ""; }).join("").trim();
+
+    if (body.stop_reason !== "tool_use" || !toolUses.length) {
+      return { ok: true, text: text, trace: trace, rounds: round, usage: usage };
+    }
+
+    // Keep the assistant turn VERBATIM (thinking blocks included — the API
+    // requires them back), then answer every tool call.
+    messages.push({ role: "assistant", content: body.content });
+    const results = toolUses.map(function (tu) {
+      let out;
+      try { out = runAiTool_(tu.name, tu.input || {}); }
+      catch (e) { out = { error: String(e && e.message || e) }; }
+      trace.push({ tool: tu.name, detail: toolDetail_(tu.name, tu.input, out), ok: !out.error });
+      return { type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(out).slice(0, 40000) };
+    });
+    messages.push({ role: "user", content: results });
+
+    if (outOfTime()) {
+      return { ok: true, partial: true, trace: trace, rounds: round, usage: usage,
+               text: text || "I ran out of time mid-task — the tool calls above did run; ask me to continue." };
+    }
+  }
+  return { ok: true, partial: true, trace: trace, rounds: 8, usage: usage,
+           text: "I hit the round limit before finishing — ask me to continue from here." };
+}
+
+function runAiTool_(name, inp) {
+  switch (name) {
+    case "drive_search":  return toolSearch_(inp);
+    case "drive_list":    return toolList_(inp);
+    case "drive_read":    return toolRead_(inp);
+    case "drive_write":   return toolWrite_(inp);
+    case "register_read": return toolRegister_(inp);
+    default: return { error: "Unknown tool " + name };
+  }
+}
+
+function toolDetail_(name, inp, out) {
+  inp = inp || {};
+  if (name === "drive_search")  return inp.query || "";
+  if (name === "drive_list")    return (out && out.folder) || inp.folderId || "";
+  if (name === "drive_read")    return (out && out.name) || inp.fileId || "";
+  if (name === "drive_write")   return inp.title || (out && out.name) || inp.fileId || "";
+  if (name === "register_read") return inp.register || "";
+  return "";
+}
+
+function fileRow_(f) {
+  let folder = "";
+  try { const ps = f.getParents(); if (ps.hasNext()) folder = ps.next().getName(); } catch (e) { /* shared roots */ }
+  return { fileId: f.getId(), name: f.getName(), mimeType: f.getMimeType(),
+           url: f.getUrl(), modified: f.getLastUpdated().toISOString(), folder: folder };
+}
+
+function toolSearch_(inp) {
+  const q = String(inp.query || "").replace(/'/g, "\\'").trim();
+  if (!q) return { error: "query required" };
+  const max = Math.min(Math.max(inp.maxResults || 10, 1), 20);
+  const out = [], seen = {};
+  ["title contains '" + q + "'", "fullText contains '" + q + "'"].forEach(function (expr) {
+    if (out.length >= max) return;
+    const it = DriveApp.searchFiles(expr + " and trashed = false");
+    while (it.hasNext() && out.length < max) {
+      const f = it.next();
+      if (seen[f.getId()]) continue;
+      seen[f.getId()] = 1;
+      out.push(fileRow_(f));
+    }
+  });
+  return { results: out, count: out.length };
+}
+
+function toolList_(inp) {
+  const folder = DriveApp.getFolderById(String(inp.folderId || ""));
+  const folders = [], files = [];
+  const fi = folder.getFolders();
+  while (fi.hasNext() && folders.length < 50) { const f = fi.next(); folders.push({ folderId: f.getId(), name: f.getName(), url: f.getUrl() }); }
+  const gi = folder.getFiles();
+  while (gi.hasNext() && files.length < 50) files.push(fileRow_(gi.next()));
+  return { folder: folder.getName(), url: folder.getUrl(), folders: folders, files: files };
+}
+
+function toolRead_(inp) {
+  const file = DriveApp.getFileById(String(inp.fileId || ""));
+  const mime = file.getMimeType();
+  const cap = Math.min(Math.max(inp.maxChars || 20000, 1000), 50000);
+  let text;
+  if (mime === MimeType.GOOGLE_DOCS) {
+    text = DocumentApp.openById(file.getId()).getBody().getText();
+  } else if (mime === MimeType.GOOGLE_SHEETS) {
+    const parts = [];
+    SpreadsheetApp.openById(file.getId()).getSheets().slice(0, 5).forEach(function (sh) {
+      const rows = Math.min(sh.getLastRow(), 200), cols = Math.min(sh.getLastColumn(), 26);
+      if (!rows || !cols) return;
+      parts.push("## Tab: " + sh.getName() + "\n" +
+        sh.getRange(1, 1, rows, cols).getValues().map(function (r) { return r.join("\t"); }).join("\n"));
+    });
+    text = parts.join("\n\n");
+  } else if (/^text\/|json|csv|xml/.test(mime)) {
+    text = file.getBlob().getDataAsString();
+  } else {
+    return { name: file.getName(), mimeType: mime, url: file.getUrl(),
+             error: "Binary format — cannot read as text; give the user the link instead." };
+  }
+  return { name: file.getName(), mimeType: mime, url: file.getUrl(),
+           truncated: text.length > cap, content: text.slice(0, cap) };
+}
+
+function toolWrite_(inp) {
+  const content = String(inp.content || "");
+  if (inp.fileId) {
+    const doc = DocumentApp.openById(String(inp.fileId));
+    if (inp.mode === "replace") doc.getBody().setText(content);
+    else doc.getBody().appendParagraph(content);
+    doc.saveAndClose();
+    return { fileId: doc.getId(), name: doc.getName(), url: doc.getUrl(),
+             action: inp.mode === "replace" ? "replaced body" : "appended" };
+  }
+  if (!inp.title) return { error: "Give fileId (existing doc) or title (new doc)" };
+  const doc = DocumentApp.create(String(inp.title));
+  doc.getBody().setText(content);
+  doc.saveAndClose();
+  const file = DriveApp.getFileById(doc.getId());
+  const dest = String(inp.folderId || CONFIG.REGISTRY_FOLDER_ID);
+  try { file.moveTo(DriveApp.getFolderById(dest)); }
+  catch (e) { return { fileId: doc.getId(), name: doc.getName(), url: doc.getUrl(), action: "created (could not move to folder " + dest + ")" }; }
+  return { fileId: doc.getId(), name: doc.getName(), url: doc.getUrl(), action: "created" };
+}
+
+function toolRegister_(inp) {
+  const res = listRegistry_({ register: inp.register });
+  if (!res.ok) return { error: res.error || "register unreadable" };
+  return { register: inp.register, headers: res.headers,
+           total: res.rows.length, rows: res.rows.slice(-100), url: res.registerUrl };
 }
 
 

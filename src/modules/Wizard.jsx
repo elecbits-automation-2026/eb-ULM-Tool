@@ -18,12 +18,26 @@ import { useUlm } from "../data.jsx";
 import { Pill, Btn, Field, Seg, KV, MD, TypingDots, chipS, Done, ChoiceCard, uid, sleep, todayStr, fmtDate } from "../ui.jsx";
 import { MONO, INDUSTRY_CODES, ORG_SIZES, TEAM_SLOTS, KINDS, kindOf, LLD_QUESTIONS, makeClientId, makeProjectId, seqOf, pad2 } from "../constants.js";
 import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject, driveNextIds, driveSearchClients } from "../lib/ulmDrive.js";
-import { aiProbe, claude, readClientMessage, suggestClientProfile, extractLld, designerSystem, designerPrompt, fallbackDesigner } from "../lib/ai.js";
+import { aiProbe, claude, interpretMessage, readClientMessage, suggestClientProfile, extractLld, designerSystem, designerPrompt, fallbackDesigner } from "../lib/ai.js";
 
 const PHASES = ["Client", "Contact", "Project", "ID", "Team", "LLD — Customer", "LLD — Designer", "Review"];
 const phaseOf = (step) => ({ client: 0, industry: 0, orgsize: 0, clientid: 0, contact: 1, pname: 2, pdesc: 2, kind: 2, deadline: 2, pid: 3, team: 4, lldc: 5, lldq: 5, lldsum: 5, lldd: 6, review: 7, provision: 7, done: 7 }[step] ?? 0);
 
 const normId = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* Widget steps that also accept typed input once Claude is on. */
+const TYPED_PH = {
+  industry: "Type the industry, ask a question — or tap a chip",
+  orgsize: "e.g. \"they're a small startup\" — or tap an option",
+  kind: "e.g. \"they just need assembly\" — or tap a card",
+  deadline: "e.g. \"mid October\" or 2026-10-15 — or tap",
+};
+
+/* Greeting / intent chatter that is definitely not a company name — the
+   no-AI guard for the client step. */
+const looksLikeChatter = (t) =>
+  /^(hi|hey|hello|yo|ok|okay|yes|namaste)\b/i.test(t) ||
+  /\b(new client|new project|create a|i have a|i want|help me|let'?s start)\b/i.test(t);
 
 export default function WizardModule({ onOpenProject }) {
   const ulm = useUlm();
@@ -42,8 +56,17 @@ export default function WizardModule({ onOpenProject }) {
      ANTHROPIC_API_KEY is actually set, so the buttons never promise AI that
      is not there. A ref mirror keeps the value visible inside go()'s closure. */
   const [aiOn, setAiOn] = useState(false);
+  const [aiNote, setAiNote] = useState("checking…");
   const aiOnRef = useRef(false);
-  useEffect(() => { aiProbe().then((r) => { aiOnRef.current = !!r.ok; setAiOn(!!r.ok); }).catch(() => {}); }, []);
+  useEffect(() => {
+    aiProbe().then((r) => {
+      aiOnRef.current = !!r.ok; setAiOn(!!r.ok);
+      setAiNote(r.ok ? `${r.model} via ${r.via}` : (r.error || "not configured"));
+    }).catch(() => setAiNote("probe failed"));
+  }, []);
+  /* The message id of the currently open widget, so a typed answer can freeze
+     the same card a click would have. */
+  const lastWidgetId = useRef(null);
   const d = useRef({ clientName: "", industry: null, orgSize: null, clientId: "", existingClient: false, contact: { name: "", designation: "", phone: "", email: "" }, name: "", desc: "", kind: "", deadline: "", projectId: "", idMode: "auto", team: [], lldC: null, lldD: null, lldAnswers: {}, ownerId: "", clientRegisterUrl: "", projectRegisterUrl: "" }).current;
 
   useEffect(() => { bodyRef.current?.scrollTo({ top: 1e9, behavior: "smooth" }); }, [msgs, typing]);
@@ -51,7 +74,9 @@ export default function WizardModule({ onOpenProject }) {
   const push = (m) => setMsgs((x) => [...x, { id: uid(), ...m }]);
   const sys = useCallback(async (text, widget, sub, extra) => {
     setTyping(true); await sleep(280); setTyping(false);
-    push({ who: "sys", text, widget, sub, ...extra });
+    const id = uid();
+    if (widget) lastWidgetId.current = id;
+    push({ id, who: "sys", text, widget, sub, ...extra });
   }, []);
   const meMsg = (text) => push({ who: "me", text });
   const freeze = (id, summary) => setMsgs((x) => x.map((m) => (m.id === id ? { ...m, widget: null, frozen: summary } : m)));
@@ -79,6 +104,10 @@ export default function WizardModule({ onOpenProject }) {
       case "done": await sys("All set. The project is live in the portal — allocate more people, add **PCB-ID folders** (one per board, into the PCB & Firmware area), or re-run Drive provisioning from its detail page any time.", "donew"); break;
       default: break;
     }
+    // With Claude on, the widget steps also take typed answers — "they're a
+    // small startup", "mid october", "which route is for assembly-only?" all
+    // land somewhere sensible instead of the input sitting disabled.
+    if (aiOnRef.current && TYPED_PH[s]) { setInputOn(true); setPh(TYPED_PH[s]); }
   }, [sys]);
 
   const askLld = async (q, idx) => {
@@ -99,6 +128,57 @@ export default function WizardModule({ onOpenProject }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
+  /* ── the conversational layer ─────────────────────────────────────────
+     One Claude read of the typed message against the pending step: a pick
+     advances the wizard exactly like the click would have, an answer fills
+     the field, a question gets a real answer and the step re-asked.       */
+  const dataSummary = () => [
+    d.clientName && `client ${d.clientName}`, d.industry && `industry ${d.industry.label}`,
+    d.orgSize && `org size ${d.orgSize.label}`, d.name && `project "${d.name}"`,
+    d.kind && `route ${d.kind}`, d.deadline && `deadline ${d.deadline}`,
+  ].filter(Boolean).join(" · ");
+
+  const applyPick = {
+    industry: (code) => { const i = INDUSTRY_CODES.find((x) => x.code === code); if (!i) return false; d.industry = i; freeze(lastWidgetId.current, `${i.label} (${i.code})`); go("orgsize"); return true; },
+    orgsize: (code) => { const o = ORG_SIZES.find((x) => x.code === code); if (!o) return false; d.orgSize = o; d.clientId = ""; freeze(lastWidgetId.current, `${o.label} (${o.code})`); go("clientid"); return true; },
+    kind: (code) => { const k = KINDS.find((x) => x.k === code); if (!k) return false; d.kind = k.k; freeze(lastWidgetId.current, k.full); go("deadline"); return true; },
+  };
+
+  const SMART_STEPS = {
+    industry: { q: "Which industry is this client in?", options: () => INDUSTRY_CODES.map((i) => ({ code: i.code, label: i.label })) },
+    orgsize: { q: "What size of organisation is the client?", options: () => ORG_SIZES.map((o) => ({ code: o.code, label: o.label })) },
+    kind: { q: "Which delivery route owns this project — the ULM bifurcation?", options: () => KINDS.map((k) => ({ code: k.k, label: `${k.full} (${k.tool})` })) },
+    deadline: { q: "When is the project deadline?", date: true },
+    pname: { q: "What is the project called?" },
+    pdesc: { q: "One line on what we're building?" },
+  };
+
+  const smartRoute = async (s, v) => {
+    const cfg = SMART_STEPS[s];
+    if (!cfg || !aiOnRef.current) return false;
+    setTyping(true);
+    let r;
+    try {
+      r = await interpretMessage({ step: s, question: cfg.q, options: cfg.options?.(), date: cfg.date, data: dataSummary(), message: v });
+    } catch { setTyping(false); return false; }
+    setTyping(false);
+    if (r.kind === "pick" && r.value && applyPick[s]?.(String(r.value).trim())) return true;
+    if (r.kind === "answer" && r.value) {
+      const value = String(r.value).trim();
+      if (s === "deadline") {
+        const iso = value.slice(0, 10);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso) && iso >= todayStr()) {
+          d.deadline = iso; freeze(lastWidgetId.current, fmtDate(iso)); go("pid"); return true;
+        }
+      } else if (s === "pname") { d.name = value; go("pdesc"); return true; }
+      else if (s === "pdesc") { d.desc = value; go("kind"); return true; }
+    }
+    // A question or chat — speak Claude's reply, keep the step open.
+    await sys(r.reply || "Tell me a bit more?");
+    setInputOn(true); setPh(TYPED_PH[s] || "Type here…");
+    return true;
+  };
+
   const handleSend = async () => {
     const v = val.trim();
     if (!v) return;
@@ -106,10 +186,16 @@ export default function WizardModule({ onOpenProject }) {
     const s = stepRef.current;
     if (s === "client") {
       let name = v;
-      // "yes check if hitachi exists as a client ?" is a question about
-      // Hitachi, not a company by that name. Anything that reads like a
-      // sentence goes through Claude to pull out who they actually mean.
-      if (aiOnRef.current && (v.split(/\s+/).length > 3 || /[?!]/.test(v))) {
+      // "hi i have new client" is not a company called that. Without Claude,
+      // catch the obvious chatter and just re-ask for the name.
+      if (!aiOnRef.current && looksLikeChatter(v)) {
+        await sys("Got it — I just need the **company's name** to start. What is the client called?");
+        setInputOn(true); setPh("e.g. Acme Devices");
+        return;
+      }
+      // With Claude: anything that reads like a sentence, question or greeting
+      // goes through it to pull out who they actually mean.
+      if (aiOnRef.current && (v.split(/\s+/).length > 3 || /[?!]/.test(v) || looksLikeChatter(v))) {
         setTyping(true);
         try {
           const r = await readClientMessage(v);
@@ -151,10 +237,34 @@ export default function WizardModule({ onOpenProject }) {
         go("contact");
       } else if (!d.nearMatches) go("industry");
       else { d.nearMatches = null; setInputOn(true); setPh("Exact name to reuse, or a new name"); }
-    } else if (s === "pname") { d.name = v; go("pdesc"); }
-    else if (s === "pdesc") { d.desc = v.toLowerCase() === "skip" ? "" : v; go("kind"); }
-    else if (s === "lldq") {
+    } else if (s === "industry" || s === "orgsize" || s === "kind" || s === "deadline") {
+      const handled = await smartRoute(s, v);
+      if (!handled) {
+        await sys("I couldn't reach Claude just now — use the options above.");
+        setInputOn(true); setPh(TYPED_PH[s] || "Type here…");
+      }
+    } else if (s === "pname") {
+      // A whole sentence probably wraps the name ("we're calling it Falcon").
+      if (aiOnRef.current && (v.split(/\s+/).length > 5 || /\?/.test(v))) { if (await smartRoute("pname", v)) return; }
+      d.name = v; go("pdesc");
+    } else if (s === "pdesc") {
+      if (aiOnRef.current && /\?/.test(v)) { if (await smartRoute("pdesc", v)) return; }
+      d.desc = v.toLowerCase() === "skip" ? "" : v; go("kind");
+    } else if (s === "lldq") {
       const q = LLD_QUESTIONS[lldQ];
+      // Ending in "?" reads as a question about the question — answer it and
+      // keep the same LLD question open.
+      if (aiOnRef.current && /\?$/.test(v)) {
+        setTyping(true);
+        try {
+          const a = await claude(
+            `A user is filling Elecbits' customer-LLD questionnaire. Current question: "${q.text}"${q.hint ? ` (hint: ${q.hint})` : ""}. They asked: "${v}". Answer helpfully with real electronics knowledge in under 60 words, then invite them to answer (or type skip).`,
+            { maxTokens: 500, effort: "low" },
+          );
+          setTyping(false); await sys(a); setInputOn(true); setPh(q.hint || "Type the answer (or `skip`)");
+          return;
+        } catch { setTyping(false); /* fall through — record it as the answer */ }
+      }
       d.lldAnswers[q.id] = v.toLowerCase() === "skip" ? "TBD" : v;
       await nextLld(lldQ);
     }
@@ -676,8 +786,15 @@ export default function WizardModule({ onOpenProject }) {
       <div style={{ padding: "13px 18px", borderBottom: "1px solid var(--bdr)", background: "var(--soft)", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <span style={{ width: 30, height: 30, borderRadius: 9, background: "linear-gradient(135deg,#2563eb,#1e40af)", color: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontWeight: 700, fontSize: 13 }}>Eb</span>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 13.5 }}>New project — create &amp; sanction</div>
-          <div style={{ fontSize: 11, color: "var(--txt2)" }}>Three hard gates: Project ID · Customer LLD · Designer LLD</div>
+          <div style={{ fontWeight: 700, fontSize: 13.5, display: "flex", alignItems: "center", gap: 8 }}>
+            New project — create &amp; sanction
+            <span title={aiNote}>
+              <Pill color={aiOn ? "var(--green)" : "var(--amber)"}><Sparkles size={10} /> {aiOn ? "Claude on" : "Claude off"}</Pill>
+            </span>
+          </div>
+          <div style={{ fontSize: 11, color: "var(--txt2)" }}>
+            {aiOn ? "Type anything — answers, questions, your own words — or use the options." : `Three hard gates: Project ID · Customer LLD · Designer LLD — AI off: ${aiNote}`}
+          </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 2, flexWrap: "wrap" }}>
           {PHASES.map((p, i) => {
