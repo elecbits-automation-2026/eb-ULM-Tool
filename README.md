@@ -181,15 +181,34 @@ Google permission (Docs) — approve it once.
 
 Everything still works without AI — templates and manual entry take over.
 
-The key never ships to the browser. Two server-side routes, either works:
+The key never ships to the browser. Two server-side routes — the portal
+prefers Supabase when configured and falls back to the Apps Script:
 
-- **Drive web app (usual route — nothing extra to host).** In the same Apps
-  Script project that provisions folders: ⚙ *Project Settings → Script
-  properties → Add* → `ANTHROPIC_API_KEY` = your key from
-  console.anthropic.com. Then *Deploy → Manage deployments → ✏️ → New
-  version → Deploy*. The portal probes the backend and lights up on its own.
-- **Supabase Edge Function.** Set `VITE_CLAUDE_PROXY_URL` to the same `claude`
-  function the ODM app deploys; it takes precedence when both exist.
+- **Supabase Edge Functions** (`supabase/functions/claude` +
+  `supabase/functions/claude-agent`). The Anthropic key lives in Supabase
+  secrets; `claude-agent` runs the Assistant's tool loop and borrows the Drive
+  web app's hands via its `tool.run` action.
+
+  ```
+  supabase functions deploy claude claude-agent
+  supabase secrets set ANTHROPIC_API_KEY=sk-ant-…
+  supabase secrets set ULM_DRIVE_URL=https://script.google.com/macros/s/…/exec
+  supabase secrets set ULM_DRIVE_TOKEN=…            # the SHARED_TOKEN
+  ```
+
+  (Dashboard route: Edge Functions → *Deploy new function* → paste each
+  `index.ts`, then Edge Functions → *Secrets* for the three values. Keep JWT
+  verification ON — the portal sends its anon key automatically.)
+
+  Then in Vercel: `VITE_CLAUDE_PROXY_URL=https://<project-ref>.functions.supabase.co/claude`.
+  The agent URL is derived (`…/claude-agent`); override with
+  `VITE_CLAUDE_AGENT_URL` only if you name it differently.
+
+- **Drive web app only (no Supabase needed).** In the Apps Script project:
+  ⚙ *Project Settings → Script properties → Add* → `ANTHROPIC_API_KEY`, then
+  *Deploy → Manage deployments → ✏️ → New version → Deploy*. Leave
+  `VITE_CLAUDE_PROXY_URL` unset and everything — chat and the agent — runs
+  through the web app instead.
 
 Model defaults to `claude-opus-5` (override with `VITE_CLAUDE_MODEL`, or
 `AI_MODEL` in the Apps Script CONFIG).

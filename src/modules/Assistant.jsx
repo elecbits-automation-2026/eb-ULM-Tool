@@ -13,8 +13,8 @@ import { Send, Sparkles, Search, FolderOpen, FileText, PenLine, Table2, AlertTri
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, TypingDots, uid } from "../ui.jsx";
 import { MONO } from "../constants.js";
-import { driveConfigured, driveAiAgent } from "../lib/ulmDrive.js";
-import { aiProbe } from "../lib/ai.js";
+import { driveConfigured } from "../lib/ulmDrive.js";
+import { aiProbe, aiAgent } from "../lib/ai.js";
 
 const TOOL_META = {
   drive_search: { icon: Search, verb: "searched" },
@@ -72,7 +72,7 @@ export default function AssistantModule() {
     setMsgs((x) => [...x, { id: uid(), who: "me", text: v }]);
     history.current = [...history.current, { role: "user", content: v }].slice(-16);
     setBusy(true);
-    const res = await driveAiAgent({ messages: history.current });
+    const res = await aiAgent({ messages: history.current });
     setBusy(false);
     if (!res.ok) {
       setMsgs((x) => [...x, { id: uid(), who: "sys", error: res.error || "The assistant call failed." }]);
@@ -86,6 +86,9 @@ export default function AssistantModule() {
     return <div className="fade card" style={{ padding: 40, textAlign: "center", color: "var(--txt2)", fontSize: 13 }}>The assistant works with the admin's Drive — only superadmin / dept-head profiles can use it.</div>;
   }
 
+  // Either agent backend works: the claude-agent Edge Function (with the
+  // Drive web app behind it for tools) or the Apps Script loop directly —
+  // both need the Drive web app configured.
   const ready = driveConfigured && ai?.ok;
 
   return (
