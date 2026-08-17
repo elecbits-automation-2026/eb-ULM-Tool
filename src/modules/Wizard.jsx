@@ -18,7 +18,7 @@ import { useUlm } from "../data.jsx";
 import { Pill, Btn, Field, Seg, KV, MD, TypingDots, chipS, Done, ChoiceCard, uid, sleep, todayStr, fmtDate } from "../ui.jsx";
 import { MONO, INDUSTRY_CODES, ORG_SIZES, TEAM_SLOTS, KINDS, kindOf, LLD_QUESTIONS, makeClientId, makeProjectId, seqOf, pad2 } from "../constants.js";
 import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject, driveNextIds, driveSearchClients } from "../lib/ulmDrive.js";
-import { aiEnabled, claude, designerPrompt, fallbackDesigner } from "../lib/ai.js";
+import { aiProbe, claude, readClientMessage, suggestClientProfile, extractLld, designerSystem, designerPrompt, fallbackDesigner } from "../lib/ai.js";
 
 const PHASES = ["Client", "Contact", "Project", "ID", "Team", "LLD — Customer", "LLD — Designer", "Review"];
 const phaseOf = (step) => ({ client: 0, industry: 0, orgsize: 0, clientid: 0, contact: 1, pname: 2, pdesc: 2, kind: 2, deadline: 2, pid: 3, team: 4, lldc: 5, lldq: 5, lldsum: 5, lldd: 6, review: 7, provision: 7, done: 7 }[step] ?? 0);
@@ -38,6 +38,12 @@ export default function WizardModule({ onOpenProject }) {
   const [lldQ, setLldQ] = useState(0);
   const stepRef = useRef(step); stepRef.current = step;
   const bodyRef = useRef(null);
+  /* Claude on? Probed once — the Drive backend answers whether its
+     ANTHROPIC_API_KEY is actually set, so the buttons never promise AI that
+     is not there. A ref mirror keeps the value visible inside go()'s closure. */
+  const [aiOn, setAiOn] = useState(false);
+  const aiOnRef = useRef(false);
+  useEffect(() => { aiProbe().then((r) => { aiOnRef.current = !!r.ok; setAiOn(!!r.ok); }).catch(() => {}); }, []);
   const d = useRef({ clientName: "", industry: null, orgSize: null, clientId: "", existingClient: false, contact: { name: "", designation: "", phone: "", email: "" }, name: "", desc: "", kind: "", deadline: "", projectId: "", idMode: "auto", team: [], lldC: null, lldD: null, lldAnswers: {}, ownerId: "", clientRegisterUrl: "", projectRegisterUrl: "" }).current;
 
   useEffect(() => { bodyRef.current?.scrollTo({ top: 1e9, behavior: "smooth" }); }, [msgs, typing]);
@@ -68,7 +74,7 @@ export default function WizardModule({ onOpenProject }) {
       case "lldc": await sys("**Customer LLD** — a hard gate: no customer LLD, no project. Capture it through the guided questionnaire, or paste / upload it.", "lldc"); break;
       case "lldq": { const q = LLD_QUESTIONS[0]; setLldQ(0); await askLld(q, 0); break; }
       case "lldsum": { const answered = LLD_QUESTIONS.filter((q) => d.lldAnswers[q.id] && d.lldAnswers[q.id] !== "TBD").length; d.lldC = { mode: "chat", answers: { ...d.lldAnswers }, text: composeLLDText(), fileName: "" }; await sys(`Customer LLD captured — **${answered}/${LLD_QUESTIONS.length} answered**, the rest marked TBD.`, "lldsumw"); break; }
-      case "lldd": await sys("**Designer LLD** — the internal engineering spec, also a hard gate. Generate it from the customer LLD" + (aiEnabled ? " with AI" : " from the offline template") + ", or paste it manually.", "lldd"); break;
+      case "lldd": await sys("**Designer LLD** — the internal engineering spec, also a hard gate. Generate it from the customer LLD" + (aiOnRef.current ? " with AI" : " from the offline template") + ", or paste it manually.", "lldd"); break;
       case "review": await sys("**Review everything before it becomes real.**", "review"); break;
       case "done": await sys("All set. The project is live in the portal — allocate more people, add **PCB-ID folders** (one per board, into the PCB & Firmware area), or re-run Drive provisioning from its detail page any time.", "donew"); break;
       default: break;
@@ -99,23 +105,42 @@ export default function WizardModule({ onOpenProject }) {
     setVal(""); setInputOn(false); meMsg(v);
     const s = stepRef.current;
     if (s === "client") {
-      d.clientName = v;
+      let name = v;
+      // "yes check if hitachi exists as a client ?" is a question about
+      // Hitachi, not a company by that name. Anything that reads like a
+      // sentence goes through Claude to pull out who they actually mean.
+      if (aiOnRef.current && (v.split(/\s+/).length > 3 || /[?!]/.test(v))) {
+        setTyping(true);
+        try {
+          const r = await readClientMessage(v);
+          setTyping(false);
+          if (r.company) {
+            name = r.company.trim();
+            if (r.intent !== "name") await sys(`${r.reply || `Looking for **${name}**…`}`, null, "understood via Claude");
+          } else {
+            await sys(r.reply || "I still need a client / company name — what is it?");
+            setInputOn(true); setPh("e.g. Acme Devices");
+            return;
+          }
+        } catch { setTyping(false); /* treat the raw text as the name */ }
+      }
+      d.clientName = name;
       // The register in Drive is the client list of record — search it, then
       // fall back to whatever the database mirror holds.
       let found = null;
       if (driveConfigured) {
-        const res = await driveSearchClients(v);
+        const res = await driveSearchClients(name);
         if (res.ok && res.matches?.length) {
-          const exact = res.matches.find((m) => m.name.toLowerCase().trim() === v.toLowerCase().trim());
+          const exact = res.matches.find((m) => m.name.toLowerCase().trim() === name.toLowerCase().trim());
           if (exact) found = exact;
           else if (res.matches.length <= 6) {
-            await sys(`No exact match for **${v}**. The register has ${res.matches.length} similar: ${res.matches.map((m) => `**${m.name}** (${m.clientId})`).join(", ")}. Type the exact name to reuse one, or continue to create a new client.`, null, "searching the Client-ID register in Drive");
+            await sys(`No exact match for **${name}**. The register has ${res.matches.length} similar: ${res.matches.map((m) => `**${m.name}** (${m.clientId})`).join(", ")}. Type the exact name to reuse one, or continue to create a new client.`, null, "searching the Client-ID register in Drive");
             d.nearMatches = res.matches;
           }
         }
       }
       if (!found) {
-        const local = orgs.find((c) => c.name.toLowerCase() === v.toLowerCase());
+        const local = orgs.find((c) => c.name.toLowerCase() === name.toLowerCase());
         if (local) found = { clientId: local.clientId, name: local.name, industry: local.industry, orgSize: local.orgSize, seq: seqOf(local.clientId) };
       }
       if (found) {
@@ -238,21 +263,60 @@ export default function WizardModule({ onOpenProject }) {
 
   /* ── widgets ─────────────────────────────────────────────────────────── */
 
-  const IndustryW = ({ m }) => (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-      {INDUSTRY_CODES.map((i) => (
-        <button key={i.code} style={chipS(false)} onClick={() => { d.industry = i; freeze(m.id, `${i.label} (${i.code})`); meMsg(i.label); go("orgsize"); }}>
-          {i.label} <span style={{ fontFamily: MONO, opacity: 0.6 }}>{i.code}</span>
-        </button>
-      ))}
-    </div>
-  );
+  const IndustryW = ({ m }) => {
+    /* Claude guesses both codes from the company name; the user confirms with
+       one click or ignores it and picks from the chips as before. The guess
+       is kept on `d` so a re-render never refetches. */
+    const [sug, setSug] = useState(d.aiProfile || null);
+    const [thinking, setThinking] = useState(false);
+    useEffect(() => {
+      if (!aiOn || d.aiProfile || d.aiProfileFailed) return;
+      let alive = true;
+      setThinking(true);
+      suggestClientProfile({ clientName: d.clientName, industries: INDUSTRY_CODES, sizes: ORG_SIZES, contact: d.contact?.name })
+        .then((r) => { d.aiProfile = r; if (alive) { setSug(r); setThinking(false); } })
+        .catch(() => { d.aiProfileFailed = true; if (alive) setThinking(false); });
+      return () => { alive = false; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const sugInd = sug && INDUSTRY_CODES.find((x) => x.code === sug.industryCode);
+    const sugOrg = sug && ORG_SIZES.find((x) => x.code === sug.sizeCode);
+    const useSug = () => {
+      d.industry = sugInd; d.orgSize = sugOrg;
+      freeze(m.id, `${sugInd.label} (${sugInd.code}) · ${sugOrg.label} (${sugOrg.code})`);
+      meMsg(`${sugInd.label} · ${sugOrg.label}`);
+      go("clientid");
+    };
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {thinking && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> asking Claude about {d.clientName}…</div>}
+        {sugInd && sugOrg && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", borderRadius: 10, border: "1px solid var(--acc)", background: "var(--soft)" }}>
+            <div style={{ fontSize: 12.5, lineHeight: 1.6 }}>
+              <Sparkles size={12} style={{ color: "var(--acc)", marginRight: 5, verticalAlign: -1 }} />
+              Claude suggests <b>{sugInd.label}</b> <span style={{ fontFamily: MONO, opacity: 0.6 }}>{sugInd.code}</span> · <b>{sugOrg.label}</b> <span style={{ fontFamily: MONO, opacity: 0.6 }}>{sugOrg.code}</span>
+              {sug.confidence !== "high" && <Pill color="var(--amber)" style={{ marginLeft: 6 }}>{sug.confidence} confidence</Pill>}
+              <div style={{ fontSize: 11.5, color: "var(--txt2)", marginTop: 3 }}>{sug.why}</div>
+            </div>
+            <div><Btn small icon={Sparkles} onClick={useSug}>Use both</Btn></div>
+          </div>
+        )}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {INDUSTRY_CODES.map((i) => (
+            <button key={i.code} style={chipS(sugInd?.code === i.code)} onClick={() => { d.industry = i; freeze(m.id, `${i.label} (${i.code})`); meMsg(i.label); go("orgsize"); }}>
+              {i.label} <span style={{ fontFamily: MONO, opacity: 0.6 }}>{i.code}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
   const OrgW = ({ m }) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       {ORG_SIZES.map((o) => (
-        <button key={o.code} style={{ ...chipS(false), display: "flex", justifyContent: "space-between", width: "100%", borderRadius: 10 }} onClick={() => { d.orgSize = o; d.clientId = ""; freeze(m.id, `${o.label} (${o.code})`); meMsg(o.label); go("clientid"); }}>
-          <span>{o.label}</span><span style={{ fontFamily: MONO }}>{o.code}</span>
+        <button key={o.code} style={{ ...chipS(d.aiProfile?.sizeCode === o.code), display: "flex", justifyContent: "space-between", width: "100%", borderRadius: 10 }} onClick={() => { d.orgSize = o; d.clientId = ""; freeze(m.id, `${o.label} (${o.code})`); meMsg(o.label); go("clientid"); }}>
+          <span>{o.label}{d.aiProfile?.sizeCode === o.code ? " — Claude's pick" : ""}</span><span style={{ fontFamily: MONO }}>{o.code}</span>
         </button>
       ))}
     </div>
@@ -429,11 +493,43 @@ export default function WizardModule({ onOpenProject }) {
   };
 
   const LldChoiceC = ({ m }) => {
-    const [manual, setManual] = useState(false);
-    return manual ? <ManualLLD onUse={(lld) => { d.lldC = lld; freeze(m.id, `Customer LLD · manual${lld.fileName ? ` (${lld.fileName})` : ""}`); go("lldd"); }} /> : (
+    const [mode, setMode] = useState("");
+    const [brief, setBrief] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState("");
+    /* Paste the client's own words; Claude fans them out across the 21
+       questions and leaves what the text doesn't support as TBD. Lands on the
+       same summary screen as the guided chat, so nothing is accepted unseen. */
+    const extract = async () => {
+      setBusy(true); setErr("");
+      try {
+        const res = await extractLld({ description: brief, questions: LLD_QUESTIONS, projectName: d.name, kind: kindOf(d.kind)?.label || d.kind });
+        LLD_QUESTIONS.forEach((q) => { d.lldAnswers[q.id] = res.answers?.[q.id] || "TBD"; });
+        freeze(m.id, "Customer LLD · extracted by Claude from the client's brief");
+        if (res.summary) await sys(`_${res.summary}_`);
+        go("lldsum");
+      } catch (e) {
+        setErr(`Extraction failed (${e.message}) — use the guided chat or paste instead.`);
+        setBusy(false);
+      }
+    };
+    if (mode === "manual") return <ManualLLD onUse={(lld) => { d.lldC = lld; freeze(m.id, `Customer LLD · manual${lld.fileName ? ` (${lld.fileName})` : ""}`); go("lldd"); }} />;
+    if (mode === "ai") return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <textarea className="inp" rows={7} value={brief} onChange={(e) => setBrief(e.target.value)} placeholder="Paste the client's brief, email thread, call notes — their words, any shape…" />
+        {err && <div style={{ fontSize: 12, color: "var(--red)", fontWeight: 600 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn small icon={Sparkles} disabled={!brief.trim() || busy} onClick={extract}>{busy ? "Extracting…" : "Extract the LLD with Claude"}</Btn>
+          <Btn small kind="ghost" onClick={() => setMode("")} disabled={busy}>Back</Btn>
+          {busy && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> answering {LLD_QUESTIONS.length} questions from the brief…</div>}
+        </div>
+      </div>
+    );
+    return (
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <ChoiceCard icon={Bot} title="Guided chat" sub={`${LLD_QUESTIONS.length} questions, chips + text — the fastest complete capture.`} accent onClick={() => { freeze(m.id, "Guided questionnaire"); go("lldq"); }} />
-        <ChoiceCard icon={Upload} title="Upload / paste manually" sub="Already have the LLD from the client? Paste or attach it." onClick={() => setManual(true)} />
+        {aiOn && <ChoiceCard icon={Sparkles} title="Paste the client's brief — AI fills the form" sub={`Claude answers the ${LLD_QUESTIONS.length} questions from their email / notes; unsupported ones stay TBD.`} accent onClick={() => setMode("ai")} />}
+        <ChoiceCard icon={Bot} title="Guided chat" sub={`${LLD_QUESTIONS.length} questions, chips + text — the fastest complete capture.`} accent={!aiOn} onClick={() => { freeze(m.id, "Guided questionnaire"); go("lldq"); }} />
+        <ChoiceCard icon={Upload} title="Upload / paste manually" sub="Already have the LLD from the client? Paste or attach it." onClick={() => setMode("manual")} />
       </div>
     );
   };
@@ -476,11 +572,19 @@ export default function WizardModule({ onOpenProject }) {
     const generate = async () => {
       setBusy(true); setErr("");
       try {
-        const txt = aiEnabled
-          ? await claude(designerPrompt(d.lldC?.text || "", d.name, kindOf(d.kind)?.label || d.kind))
+        const txt = aiOn
+          ? await claude(
+              designerPrompt({
+                customerLLD: d.lldC?.text || "", projectName: d.name,
+                kind: kindOf(d.kind)?.label || d.kind, clientName: d.clientName,
+                industry: d.industry?.label || "", deadline: d.deadline,
+                team: d.team.map((t) => `${t.slot}: ${people.find((p) => p.id === t.userId)?.name || "?"}`).join(", "),
+              }),
+              { system: designerSystem, maxTokens: 8000, effort: "high" },
+            )
           : fallbackDesigner(d.name, kindOf(d.kind)?.label || d.kind);
         setGen(txt);
-        if (!aiEnabled) setErr("AI proxy not configured — loaded the offline template; edit it before accepting.");
+        if (!aiOn) setErr("AI backend not configured — loaded the offline template; edit it before accepting.");
       } catch (e) {
         setErr("AI unreachable (" + e.message + ") — loaded the offline template instead."); setGen(fallbackDesigner(d.name, kindOf(d.kind)?.label || d.kind));
       }
@@ -492,14 +596,14 @@ export default function WizardModule({ onOpenProject }) {
         <textarea className="inp" rows={11} value={gen} onChange={(e) => setGen(e.target.value)} style={{ fontFamily: MONO, fontSize: 12 }} />
         {err && <div style={{ fontSize: 11.5, color: "var(--amber)", fontWeight: 600 }}>{err}</div>}
         <div style={{ display: "flex", gap: 8 }}>
-          <Btn small icon={CheckCircle2} onClick={() => { d.lldD = { mode: aiEnabled ? "ai" : "template", text: gen, fileName: "" }; freeze(m.id, aiEnabled ? "AI-generated (edited & accepted)" : "Template (edited & accepted)"); go("review"); }}>Accept Designer LLD</Btn>
+          <Btn small icon={CheckCircle2} onClick={() => { d.lldD = { mode: aiOn ? "ai" : "template", text: gen, fileName: "" }; freeze(m.id, aiOn ? "AI-generated (edited & accepted)" : "Template (edited & accepted)"); go("review"); }}>Accept Designer LLD</Btn>
           <Btn small kind="ghost" onClick={generate} disabled={busy}>{busy ? "Regenerating…" : "Regenerate"}</Btn>
         </div>
       </div>
     );
     return (
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        <ChoiceCard icon={aiEnabled ? Sparkles : Wand2} title={aiEnabled ? "Generate with AI" : "Start from the template"} sub={aiEnabled ? "Claude drafts the designer LLD from the customer LLD; you edit and accept." : "Offline template pre-structured for engineering; edit and accept."} accent onClick={generate} />
+        <ChoiceCard icon={aiOn ? Sparkles : Wand2} title={aiOn ? "Generate with AI" : "Start from the template"} sub={aiOn ? "Claude drafts the designer LLD from the customer LLD; you edit and accept." : "Offline template pre-structured for engineering; edit and accept."} accent onClick={generate} />
         <ChoiceCard icon={Upload} title="Upload / paste manually" sub="The solution architect already wrote it? Paste or attach it." onClick={() => setManual(true)} />
         {busy && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> drafting…</div>}
       </div>

@@ -160,15 +160,26 @@ it to the Project ID, finds the process-map sheet inside the copy and fills
 its *Template Link* column with links to the canonical templates, matched by
 Template ID.
 
-### 3. Claude — Designer-LLD drafting (optional)
+### 3. Claude — the wizard's brain (optional)
 
-Point at the same `claude` Edge Function the ODM app deploys:
+Four places get smarter with AI on: the client step understands sentences
+("check if hitachi exists?" → looks up *Hitachi*), the industry / org-size
+codes are suggested from the company name, a pasted client brief is fanned out
+across the 21-question customer LLD, and the Designer LLD is drafted from it.
+Everything still works without AI — templates and manual entry take over.
 
-```
-VITE_CLAUDE_PROXY_URL=https://<project-ref>.functions.supabase.co/claude
-```
+The key never ships to the browser. Two server-side routes, either works:
 
-Unset, the Designer-LLD gate uses a structured offline template.
+- **Drive web app (usual route — nothing extra to host).** In the same Apps
+  Script project that provisions folders: ⚙ *Project Settings → Script
+  properties → Add* → `ANTHROPIC_API_KEY` = your key from
+  console.anthropic.com. Then *Deploy → Manage deployments → ✏️ → New
+  version → Deploy*. The portal probes the backend and lights up on its own.
+- **Supabase Edge Function.** Set `VITE_CLAUDE_PROXY_URL` to the same `claude`
+  function the ODM app deploys; it takes precedence when both exist.
+
+Model defaults to `claude-opus-5` (override with `VITE_CLAUDE_MODEL`, or
+`AI_MODEL` in the Apps Script CONFIG).
 
 ### 4. Vercel
 

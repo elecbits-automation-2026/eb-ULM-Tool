@@ -18,6 +18,9 @@
  *                     the PCB-ID register (one project can have several boards,
  *                     so this is called once per PCB ID)
  *   registry.list     read back a register (clients | projects | pcbs)
+ *   ai.chat           ask Claude — the portal's chat brain. The Anthropic key
+ *                     lives in Script Properties, so it never reaches the
+ *                     browser bundle (see the AI section further down).
  *
  * ── Two things worth knowing ──────────────────────────────────────────────
  * 1. RESUMABLE. A copy that dies half way (Apps Script caps a request at ~6
@@ -115,6 +118,17 @@ const CONFIG = {
   // Name fragment that identifies the process-map sheet inside a freshly
   // copied project folder (matched case-insensitively).
   PROCESS_MAP_NAME_HINT: "Process",
+
+  // ── Claude (the chat brain) ──────────────────────────────────────────────
+  // The API key is NOT here on purpose. Put it in:
+  //   ⚙ Project Settings → Script properties → Add script property
+  //     name  ANTHROPIC_API_KEY
+  //     value sk-ant-…        (from console.anthropic.com → API keys)
+  // Script properties are not readable from the portal, so the key stays out
+  // of the browser bundle and out of git.
+  AI_MODEL: "claude-opus-5",
+  AI_EFFORT: "medium",       // low | medium | high  — medium is the balance
+  AI_MAX_TOKENS: 4000,
 };
 
 const CLIENT_HEADERS = [
@@ -174,6 +188,7 @@ function handle_(body) {
       case "project.provision": return json_(provisionProject_(body));
       case "pcb.provision":     return json_(provisionPcb_(body));
       case "registry.list":     return json_(listRegistry_(body));
+      case "ai.chat":           return json_(aiChat_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -198,6 +213,9 @@ function ping_() {
   out.templateLibrary = CONFIG.TEMPLATES_LIBRARY_FOLDER_ID
     ? tryName_(CONFIG.TEMPLATES_LIBRARY_FOLDER_ID)
     : "(not set — links point at the project's own copies)";
+  out.ai = anthropicKey_()
+    ? { enabled: true, model: CONFIG.AI_MODEL }
+    : { enabled: false, error: "ANTHROPIC_API_KEY is not set in this script's properties" };
   return out;
 }
 function tryName_(id) {
@@ -366,6 +384,105 @@ function searchClients_(b) {
     if (hits.length >= 25) break;
   }
   return { ok: true, matches: hits, total: names.filter(String).length, registerUrl: reg.ss.getUrl() };
+}
+
+
+/* ── Claude — the portal's chat brain ──────────────────────────────────────
+   The portal cannot call Anthropic directly: doing so would ship the API key
+   in the browser bundle, where anyone can read it. So the call goes through
+   here — the web app is already token-gated, and the key sits in this
+   script's properties where only the script can read it.
+
+   ONE-TIME SETUP
+     ⚙ Project Settings → Script properties → Add script property
+       ANTHROPIC_API_KEY = sk-ant-…      (console.anthropic.com → API keys)
+     Then Deploy → Manage deployments → ✏️ → Version: New version → Deploy.
+
+   REQUEST   { action:"ai.chat", prompt, system?, maxTokens?, effort?, schema? }
+   RESPONSE  { ok:true, text, json?, model, stopReason, usage }
+   Passing a JSON Schema makes the answer machine-readable: the model is
+   constrained to that shape and `json` comes back already parsed, which is
+   what the wizard's extract-and-classify steps rely on.                     */
+
+function anthropicKey_() {
+  try {
+    return String(PropertiesService.getScriptProperties()
+      .getProperty("ANTHROPIC_API_KEY") || "").trim();
+  } catch (e) { return ""; }
+}
+
+const AI_SETUP_HINT =
+  "Claude is not wired up yet. In this Apps Script project: ⚙ Project Settings → " +
+  "Script properties → Add script property → ANTHROPIC_API_KEY = your key from " +
+  "console.anthropic.com, then redeploy (Manage deployments → ✏️ → New version).";
+
+function aiChat_(b) {
+  const key = anthropicKey_();
+  if (!key) return { ok: false, error: AI_SETUP_HINT };
+  if (!b.prompt) return { ok: false, error: "ai.chat needs a prompt" };
+
+  const payload = {
+    model: String(b.model || CONFIG.AI_MODEL),
+    max_tokens: Math.min(Math.max(parseInt(b.maxTokens, 10) || CONFIG.AI_MAX_TOKENS, 256), 16000),
+    // Adaptive thinking: the model decides how much to think per request.
+    // (budget_tokens is rejected on this model family — do not add it back.)
+    thinking: { type: "adaptive" },
+    output_config: { effort: String(b.effort || CONFIG.AI_EFFORT) },
+    messages: [{ role: "user", content: String(b.prompt) }],
+  };
+  if (b.system) payload.system = String(b.system);
+  if (b.schema) payload.output_config.format = { type: "json_schema", schema: b.schema };
+
+  let res;
+  try {
+    res = UrlFetchApp.fetch("https://api.anthropic.com/v1/messages", {
+      method: "post",
+      contentType: "application/json",
+      headers: { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true,
+    });
+  } catch (e) {
+    return { ok: false, error: "Could not reach Anthropic: " + String(e && e.message || e) };
+  }
+
+  const code = res.getResponseCode();
+  const raw = res.getContentText() || "";
+  let body = null;
+  try { body = JSON.parse(raw); } catch (e) { /* handled below */ }
+
+  if (code !== 200 || !body) {
+    const msg = (body && body.error && body.error.message) || raw.slice(0, 300) || "no body";
+    if (code === 401) return { ok: false, error: "Anthropic rejected the API key (401). " + AI_SETUP_HINT };
+    if (code === 429) return { ok: false, error: "Anthropic rate limit hit (429) — try again in a moment." };
+    return { ok: false, error: "Anthropic HTTP " + code + ": " + msg };
+  }
+  // A safety decline arrives as HTTP 200 with no usable content — check it
+  // before reading the content array.
+  if (body.stop_reason === "refusal") {
+    return { ok: false, refusal: true, error: "Claude declined to answer this one. Rephrase, or fill it in manually." };
+  }
+
+  const text = (body.content || [])
+    .filter(function (c) { return c && c.type === "text"; })
+    .map(function (c) { return c.text || ""; })
+    .join("").trim();
+
+  const out = {
+    ok: true, text: text, model: body.model,
+    stopReason: body.stop_reason, usage: body.usage,
+  };
+  if (b.schema) {
+    try { out.json = JSON.parse(text); }
+    catch (e) { out.jsonError = "Claude's answer was not valid JSON"; }
+  }
+  return out;
+}
+
+/** Run this from the editor once to prove the key works. */
+function testAnthropic() {
+  const r = aiChat_({ prompt: "Reply with the single word: ready", maxTokens: 256, effort: "low" });
+  Logger.log(JSON.stringify(r, null, 2));
 }
 
 

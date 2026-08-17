@@ -95,3 +95,9 @@ export const driveNextIds = (params) => call("id.next", params);
 
 /** Type-ahead over the client register — "does hitachi exist yet?" */
 export const driveSearchClients = (q) => call("clients.search", { q });
+
+/** Ask Claude through the web app, which holds the Anthropic key in its
+    script properties — the key is never in this bundle.
+    driveAi({ prompt, system?, maxTokens?, effort?, schema? }) →
+    { ok, text, json?, model, stopReason, usage } */
+export const driveAi = (params) => call("ai.chat", params);

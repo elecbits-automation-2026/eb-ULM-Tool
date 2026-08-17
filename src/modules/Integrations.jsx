@@ -2,13 +2,13 @@
    The same philosophy as the ODM app: each integration is off by default,
    degrades gracefully, and its state is shown on screen rather than guessed. */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Database, FolderOpen, Sparkles, CheckCircle2, AlertTriangle, RefreshCw } from "lucide-react";
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, Section, SectionTitle, KV } from "../ui.jsx";
 import { supabaseEnabled, supabaseUrl } from "../lib/supabase.js";
 import { driveConfigured, drivePing, driveCheckRegisters } from "../lib/ulmDrive.js";
-import { aiEnabled } from "../lib/ai.js";
+import { aiProbe } from "../lib/ai.js";
 
 const Light = ({ on, warn }) => (
   <Pill color={on ? "var(--green)" : warn ? "var(--amber)" : "var(--txt2)"}>
@@ -21,6 +21,8 @@ export default function IntegrationsModule() {
   const [ping, setPing] = useState(null);
   const [regs, setRegs] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [ai, setAi] = useState(null);
+  useEffect(() => { aiProbe().then(setAi).catch(() => setAi({ ok: false, error: "probe failed" })); }, []);
 
   const doPing = async () => {
     setBusy(true);
@@ -104,10 +106,17 @@ export default function IntegrationsModule() {
       </Section>
 
       <Section>
-        <SectionTitle icon={Sparkles} right={<Light on={aiEnabled} />}>Claude — Designer-LLD drafting</SectionTitle>
+        <SectionTitle icon={Sparkles} right={<Light on={!!ai?.ok} />}>Claude — the wizard's brain</SectionTitle>
         <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.65 }}>
-          Points at the same <b>claude</b> Edge Function the ODM app deploys (the API key stays server-side). Off, the wizard's Designer-LLD gate uses the structured offline template instead. Set VITE_CLAUDE_PROXY_URL to switch on.
+          Reads what people type at the client step, suggests the industry &amp; org-size codes, extracts the customer LLD from a pasted brief, and drafts the Designer LLD. The API key stays server-side either way: the usual route is the <b>Drive web app</b> (add <b>ANTHROPIC_API_KEY</b> in its Script properties, redeploy — nothing extra to host); a <b>claude</b> Supabase Edge Function via VITE_CLAUDE_PROXY_URL takes precedence when set. Off, every AI step falls back to templates and manual entry.
         </div>
+        {ai && (
+          <div style={{ marginTop: 8, fontSize: 12 }}>
+            {ai.ok
+              ? <KV k="Backend" v={`${ai.via} · ${ai.model}`} />
+              : <span style={{ color: "var(--amber)", fontWeight: 600 }}>{ai.error}</span>}
+          </div>
+        )}
       </Section>
 
       <Section>
