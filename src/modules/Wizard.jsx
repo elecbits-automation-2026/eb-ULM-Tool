@@ -153,12 +153,12 @@ export default function WizardModule({ onOpenProject }) {
       try {
         if (!d.existingClient) {
           status("Registering the client in the **Client-ID register** (Drive)…", "blue");
-          const rc = await driveRegisterClient({ clientId: d.clientId, name: d.clientName, industry: d.industry?.label, industryCode: d.industry?.code, orgSize: d.orgSize?.label, sizeCode: d.orgSize?.code, contact: d.contact?.name, email: d.contact?.email, phone: d.contact?.phone, by: people.find((p) => p.id === me)?.name || "" });
+          const rc = await driveRegisterClient({ clientId: d.clientId, name: d.clientName, industry: d.industry?.label, industryCode: d.industry?.code, orgSize: d.orgSize?.label, sizeCode: d.orgSize?.code, contact: d.contact?.name, designation: d.contact?.designation, email: d.contact?.email, phone: d.contact?.phone, by: people.find((p) => p.id === me)?.name || "" });
           if (rc.ok) { prov.clientRegisterUrl = rc.registerUrl; d.clientRegisterUrl = rc.registerUrl; status(`Client **${d.clientId}** appended to the register.`, "green"); }
           else throw new Error(rc.error);
         }
         status("Registering the project in the **Project-ID register** (Drive)…", "blue");
-        const rp = await driveRegisterProject({ projectId: d.projectId, name: d.name, clientId: d.clientId, clientName: d.clientName, kind: d.kind, deadline: d.deadline, by: people.find((p) => p.id === me)?.name || "" });
+        const rp = await driveRegisterProject({ projectId: d.projectId, name: d.name, clientId: d.clientId, clientName: d.clientName, contact: d.contact?.name, kind: kindOf(d.kind)?.label || d.kind, desc: d.desc, status: "Planning", deadline: d.deadline, by: people.find((p) => p.id === me)?.name || "" });
         if (rp.ok) { prov.projectRegisterUrl = rp.registerUrl; d.projectRegisterUrl = rp.registerUrl; status(`Project **${d.projectId}** appended to the register.`, "green"); }
         else throw new Error(rp.error);
 

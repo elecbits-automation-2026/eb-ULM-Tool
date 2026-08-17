@@ -101,7 +101,7 @@ export function ProvisioningCard({ p }) {
     try {
       // Idempotent server-side: a retry re-uses the register row rather than
       // appending a duplicate, and resumes a half-finished folder copy.
-      const rp = await driveRegisterProject({ projectId: p.projectId, name: p.name, clientId: p.clientId, clientName: p.clientName, kind: p.kind, deadline: p.deadline, by: people.find((x) => x.id === me)?.name || "" });
+      const rp = await driveRegisterProject({ projectId: p.projectId, name: p.name, clientId: p.clientId, clientName: p.clientName, contact: p.contact?.name, kind: kindOf(p.kind)?.label || p.kind, desc: p.desc, status: p.status, deadline: p.deadline, by: people.find((x) => x.id === me)?.name || "" });
       if (rp.ok) next.projectRegisterUrl = rp.registerUrl; else throw new Error(rp.error);
 
       const pv = await driveProvisionProject({ projectId: p.projectId },

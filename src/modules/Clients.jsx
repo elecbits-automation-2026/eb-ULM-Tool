@@ -28,7 +28,7 @@ function NewClientModal({ onClose }) {
     try {
       await createClient({ clientId, name: name.trim(), industry: industry.label, orgSize: orgSize.label, contact });
       if (driveConfigured) {
-        const rc = await driveRegisterClient({ clientId, name: name.trim(), industry: industry.label, industryCode: industry.code, orgSize: orgSize.label, sizeCode: orgSize.code, contact: contact.name, email: contact.email, phone: contact.phone, by: people.find((p) => p.id === me)?.name || "" });
+        const rc = await driveRegisterClient({ clientId, name: name.trim(), industry: industry.label, industryCode: industry.code, orgSize: orgSize.label, sizeCode: orgSize.code, contact: contact.name, designation: contact.designation, email: contact.email, phone: contact.phone, by: people.find((p) => p.id === me)?.name || "" });
         if (rc.ok) toast(`${clientId} registered in Drive`, "green");
         else toast(`Drive register failed: ${rc.error}`, "amber");
       }

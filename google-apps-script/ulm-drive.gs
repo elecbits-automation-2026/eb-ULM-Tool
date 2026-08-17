@@ -50,17 +50,31 @@ const CONFIG = {
   // Long random string; must equal VITE_ULM_DRIVE_TOKEN in the portal env.
   SHARED_TOKEN: "REPLACE-WITH-A-LONG-RANDOM-STRING",
 
-  // Spreadsheet that holds the Client-ID register (one row per client).
-  // Created on first use inside REGISTRY_FOLDER_ID if left blank.
-  CLIENT_REGISTER_ID: "",
+  // ── The three registers ──────────────────────────────────────────────────
+  // Each is an EXISTING master sheet with its own columns, its own header row
+  // and several tabs — so each carries the tab to write into. Rows are matched
+  // to that tab's own headers, never to a fixed column order. Leave an id
+  // blank to have a fresh register created inside REGISTRY_FOLDER_ID instead.
 
-  // Spreadsheet that holds the Project-ID register (one row per project).
-  // Created on first use inside REGISTRY_FOLDER_ID if left blank.
-  PROJECT_REGISTER_ID: "",
+  // "Eb-Client ID Sheet_"  ·  headers on row 1
+  //   S. no. | Organisation Name | Category/Industry | Client category/org
+  //   size | Client ID | Client Folder | Point of Contact | Designation
+  CLIENT_REGISTER_ID:  "1AXZpSOM2v8zpfqgRUPBa187ULlmnarC7",
+  CLIENT_REGISTER_TAB: "Client Data and IDs",
 
-  // Spreadsheet that holds the PCB-ID register (one row per board).
-  // Created on first use inside REGISTRY_FOLDER_ID if left blank.
-  PCB_REGISTER_ID: "",
+  // "Eb-Centralised Project Tracking Sheet_"  ·  headers on row 2
+  //   S. No | Project ID | Organisation Name | Priority | Customer SPOC |
+  //   Project Type | Description | Status | Project created…
+  PROJECT_REGISTER_ID:  "19bOZiIvpvA6oqqHAZUkJptOiFJPRPPjH",
+  PROJECT_REGISTER_TAB: "All projects",
+
+  // "Eb_Hardware SKU Sheet-2026"  ·  headers on row 3
+  //   General Device Name | Eb Project ID | Product Folder Link |
+  //   Audit Checklist Link | Design status | Active status
+  // NOTE the tab: this workbook also has Discarded / Sensors tabs, and the
+  // first tab is NOT the one to write into.
+  PCB_REGISTER_ID:  "12arJXEf0DQjVouJdoXJkqpn4q38PjojY",
+  PCB_REGISTER_TAB: "PCB SKU Sheet Gateways -2026",
 
   // Folder where the registers live — "Eb-Central-ULM".
   REGISTRY_FOLDER_ID: "1c35aKmV4TSclOcCwxPvf-2HsANLerRtc",
@@ -245,6 +259,7 @@ function checkRegisters_() {
  */
 function register_(idProp, title, headers) {
   let id = CONFIG[idProp];
+  const tabWanted = CONFIG[idProp.replace(/_ID$/, "_TAB")] || "";
   const props = PropertiesService.getScriptProperties();
   if (!id) id = props.getProperty(idProp) || "";
 
@@ -258,7 +273,9 @@ function register_(idProp, title, headers) {
           'Either open it and use File → Save as Google Sheets (then put the NEW file id in ' +
           idProp + '), or set AUTO_CONVERT_REGISTERS: true to let this script convert it once.');
       }
-      const converted = convertToSheet_(file, DriveApp.getFolderById(CONFIG.REGISTRY_FOLDER_ID));
+      // Registers are linked from all over the company, so the original is
+      // left exactly where it is — only a Sheets twin is made alongside it.
+      const converted = convertToSheet_(file, null, false);
       props.setProperty(idProp, converted.getId());   // remember the new id
       ss = SpreadsheetApp.openById(converted.getId());
     } else {
@@ -270,7 +287,22 @@ function register_(idProp, title, headers) {
     props.setProperty(idProp, ss.getId());
   }
 
-  const sheet = ss.getSheets()[0];
+  // The right tab, not merely the first one — these workbooks carry
+  // "Discarded" and archive tabs that must never receive a new row.
+  let sheet = null;
+  if (tabWanted) {
+    const want = normHeader_(tabWanted);
+    ss.getSheets().forEach(function (s) {
+      if (!sheet && normHeader_(s.getName()) === want) sheet = s;
+    });
+    if (!sheet) {
+      throw new Error('Tab "' + tabWanted + '" not found in "' + ss.getName() +
+        '". Tabs present: ' + ss.getSheets().map(function (s) { return s.getName(); }).join(" · "));
+    }
+  } else {
+    sheet = ss.getSheets()[0];
+  }
+
   if (sheet.getLastRow() === 0) {          // only ever true for a register we just created
     sheet.appendRow(headers);
     sheet.getRange(1, 1, 1, headers.length).setFontWeight("bold");
@@ -281,25 +313,46 @@ function register_(idProp, title, headers) {
 
 const normHeader_ = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-/* Header aliases: the same column under the names these sheets actually use. */
+/* Header aliases: the same column under the names these sheets actually use.
+   The exact headers of the three live Elecbits registers are all in here. */
 const HEADER_ALIASES = {
   "Client ID":    ["clientid", "clientidno", "ebclientid", "clientcode"],
-  "Client Name":  ["clientname", "client", "companyname", "company", "nameoftheclient", "customername", "customer"],
-  "Industry":     ["industry", "industrytype", "sector", "domain"],
-  "Org Size":     ["orgsize", "organisationsize", "organizationsize", "companysize", "clienttype"],
-  "Contact":      ["contact", "contactperson", "contactname", "spoc", "spocname", "poc"],
+  "Client Name":  ["clientname", "client", "companyname", "company", "nameoftheclient",
+                   "customername", "customer", "organisationname", "organizationname", "orgname"],
+  "Industry":     ["industry", "industrytype", "sector", "domain", "categoryindustry", "industrycategory"],
+  "Org Size":     ["orgsize", "organisationsize", "organizationsize", "companysize",
+                   "clienttype", "clientcategoryorgsize", "clientcategory"],
+  "Contact":      ["contact", "contactperson", "contactname", "spoc", "spocname", "poc",
+                   "pointofcontact", "customerspoc", "clientspoc"],
+  "Designation":  ["designation", "role", "title", "contactdesignation"],
   "Email":        ["email", "emailid", "mail", "contactemail"],
   "Phone":        ["phone", "phoneno", "phonenumber", "mobile", "contactno", "contactnumber"],
   "Project ID":   ["projectid", "projectidno", "ebprojectid", "projectcode"],
-  "Project Name": ["projectname", "project", "nameoftheproject", "productname"],
+  "Project Name": ["projectname", "project", "nameoftheproject", "productname", "generaldevicename", "devicename"],
   "Kind":         ["kind", "type", "projecttype", "category", "deliverytype"],
+  "Description":  ["description", "desc", "scope", "details", "remarks"],
+  "Status":       ["status", "projectstatus", "currentstatus", "activestatus"],
   "Deadline":     ["deadline", "duedate", "targetdate", "enddate", "deliverydate"],
-  "Folder Link":  ["folderlink", "driveLink", "drivelink", "folder", "link", "folderurl"],
-  "Board Name":   ["boardname", "board", "pcbname"],
-  "PCB ID":       ["pcbid", "pcbidno", "ebpcbid", "boardid"],
+  "Folder Link":  ["folderlink", "drivelink", "folder", "link", "folderurl",
+                   "productfolderlink", "clientfolder", "projectfolder", "projectfolderlink"],
+  "Board Name":   ["boardname", "board", "pcbname", "generaldevicename", "devicename", "skuname"],
+  // The Hardware SKU sheet files its board ids under "Eb Project ID"; that is
+  // a different workbook from the project register, so there is no clash.
+  "PCB ID":       ["pcbid", "pcbidno", "ebpcbid", "boardid", "ebprojectid", "projectid", "sku", "skuid"],
   "Created By":   ["createdby", "raisedby", "owner", "addedby", "by"],
-  "Created At":   ["createdat", "createdon", "date", "dateadded", "timestamp"],
+  "Created At":   ["createdat", "createdon", "date", "dateadded", "timestamp", "projectcreatedon", "projectcreated"],
 };
+
+/* A running serial column ("S. no.", "S. No") — filled with the next number
+   so the register keeps counting the way a human would continue it. */
+const SERIAL_HEADERS = ["sno", "sno.", "serialno", "srno", "sl", "slno", "serialnumber", "s"];
+function serialColumnOf_(headerRow) {
+  for (let c = 0; c < headerRow.length; c++) {
+    const h = normHeader_(headerRow[c]);
+    if (h && SERIAL_HEADERS.indexOf(h) >= 0) return c + 1;
+  }
+  return 0;
+}
 
 /** Find the column (1-based) whose header matches this logical field. */
 function columnFor_(headerRow, field) {
@@ -364,6 +417,20 @@ function appendMapped_(sheet, idField, idValue, values) {
     if (c) { row[c - 1] = values[f]; placed++; }
   });
 
+  // Continue the sheet's own numbering rather than leaving a blank S. no.
+  const serialCol = serialColumnOf_(header.values);
+  if (serialCol && sheet.getLastRow() > header.row) {
+    const seen = sheet.getRange(header.row + 1, serialCol, sheet.getLastRow() - header.row, 1).getValues();
+    let max = 0;
+    seen.forEach(function (r) {
+      const n = parseInt(String(r[0]).replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(n)) max = Math.max(max, n);
+    });
+    row[serialCol - 1] = max + 1;
+  } else if (serialCol) {
+    row[serialCol - 1] = 1;
+  }
+
   // A register whose headers match nothing is almost certainly the wrong
   // file — better to say so than to append a row of blanks to it.
   if (!placed) {
@@ -388,6 +455,7 @@ function registerClient_(b) {
       "Industry": b.industry || "",
       "Org Size": b.orgSize || "",
       "Contact": b.contact || "",
+      "Designation": b.designation || "",
       "Email": b.email || "",
       "Phone": b.phone || "",
       "Created By": b.by || "",
@@ -409,7 +477,10 @@ function registerProject_(b) {
       "Project Name": b.name || "",
       "Client ID": b.clientId || "",
       "Client Name": b.clientName || "",
+      "Contact": b.contact || "",
       "Kind": b.kind || "",
+      "Description": b.desc || "",
+      "Status": b.status || "",
       "Deadline": b.deadline || "",
       "Folder Link": b.folderUrl || "",
       "Created By": b.by || "",
@@ -526,9 +597,11 @@ function provisionPcb_(b) {
     lock.waitLock(20000);
     try {
       const reg = register_("PCB_REGISTER_ID", "PCB-ID-Register", PCB_HEADERS);
+      // "Board Name" lands in the SKU sheet's "General Device Name"; the
+      // board id goes under its "Eb Project ID"; the folder under
+      // "Product Folder Link".
       appendMapped_(reg.sheet, "PCB ID", b.pcbId, {
         "PCB ID": b.pcbId,
-        "Project ID": b.projectId || "",
         "Board Name": b.boardName || "",
         "Folder Link": dest.getUrl(),
         "Created By": b.by || "",
@@ -605,7 +678,7 @@ function updateProcessMap_(projectFolder, b) {
   let converted = false;
   if (sheetFile.getMimeType() !== MimeType.GOOGLE_SHEETS) {
     try {
-      const gs = convertToSheet_(sheetFile, projectFolder);
+      const gs = convertToSheet_(sheetFile, projectFolder, true);
       if (!gs) return { updated: 0, note: "Process map is not a Google Sheet and could not be converted" };
       sheetFile = gs;
       converted = true;
@@ -681,17 +754,21 @@ function findProcessMap_(folder) {
 }
 
 /**
- * Convert an uploaded .xlsx into a Google Sheet beside it, and move the
- * original into "99-Source-Files" so the folder has exactly one live map.
- * Uses the Drive REST API with the script's own token — no advanced service
- * to enable, no extra scope beyond the Drive access DriveApp already needs.
+ * Convert an uploaded .xlsx into a Google Sheet beside it. Uses the Drive
+ * REST API with the script's own token — no advanced service to enable, no
+ * extra scope beyond the Drive access DriveApp already needs.
+ *
+ * moveOriginal: true for a project's own process map (the folder should hold
+ * exactly one live map, so the .xlsx is parked in "99-Source-Files"); false
+ * for a company register, whose original is linked from everywhere and must
+ * stay exactly where it is.
  */
-function convertToSheet_(file, projectFolder) {
+function convertToSheet_(file, fallbackFolder, moveOriginal) {
   const name = file.getName().replace(/\.xlsx?$/i, "");
   const parents = [];
   const it = file.getParents();
   while (it.hasNext()) parents.push(it.next());
-  const parent = parents.length ? parents[0] : projectFolder;
+  const parent = parents.length ? parents[0] : fallbackFolder;
 
   const res = UrlFetchApp.fetch(
     "https://www.googleapis.com/drive/v3/files/" + file.getId() + "/copy?supportsAllDrives=true",
@@ -713,11 +790,13 @@ function convertToSheet_(file, projectFolder) {
 
   // Park the .xlsx rather than deleting it — the original upload stays
   // recoverable, but nobody edits the wrong file by accident.
-  try {
-    let src = folderByName_(parent, "99-Source-Files");
-    if (!src) src = parent.createFolder("99-Source-Files");
-    file.moveTo(src);
-  } catch (e) { /* leaving it in place is not worth failing the run for */ }
+  if (moveOriginal) {
+    try {
+      let src = folderByName_(parent, "99-Source-Files");
+      if (!src) src = parent.createFolder("99-Source-Files");
+      file.moveTo(src);
+    } catch (e) { /* leaving it in place is not worth failing the run for */ }
+  }
 
   return DriveApp.getFileById(created.id);
 }
