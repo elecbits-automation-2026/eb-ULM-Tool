@@ -16,8 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Send, Sparkles, Upload, FolderOpen, Link2, ExternalLink, Shield, CheckCircle2, AlertTriangle, Bot, FileText, Wand2 } from "lucide-react";
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, Field, Seg, KV, MD, TypingDots, chipS, Done, ChoiceCard, uid, sleep, todayStr, fmtDate } from "../ui.jsx";
-import { MONO, INDUSTRY_CODES, ORG_SIZES, TEAM_SLOTS, KINDS, kindOf, LLD_QUESTIONS } from "../constants.js";
-import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject } from "../lib/ulmDrive.js";
+import { MONO, INDUSTRY_CODES, ORG_SIZES, TEAM_SLOTS, KINDS, kindOf, LLD_QUESTIONS, makeClientId, makeProjectId, seqOf, pad2 } from "../constants.js";
+import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject, driveNextIds, driveSearchClients } from "../lib/ulmDrive.js";
 import { aiEnabled, claude, designerPrompt, fallbackDesigner } from "../lib/ai.js";
 
 const PHASES = ["Client", "Contact", "Project", "ID", "Team", "LLD — Customer", "LLD — Designer", "Review"];
@@ -100,14 +100,32 @@ export default function WizardModule({ onOpenProject }) {
     const s = stepRef.current;
     if (s === "client") {
       d.clientName = v;
-      const found = orgs.find((c) => c.name.toLowerCase() === v.toLowerCase());
+      // The register in Drive is the client list of record — search it, then
+      // fall back to whatever the database mirror holds.
+      let found = null;
+      if (driveConfigured) {
+        const res = await driveSearchClients(v);
+        if (res.ok && res.matches?.length) {
+          const exact = res.matches.find((m) => m.name.toLowerCase().trim() === v.toLowerCase().trim());
+          if (exact) found = exact;
+          else if (res.matches.length <= 6) {
+            await sys(`No exact match for **${v}**. The register has ${res.matches.length} similar: ${res.matches.map((m) => `**${m.name}** (${m.clientId})`).join(", ")}. Type the exact name to reuse one, or continue to create a new client.`, null, "searching the Client-ID register in Drive");
+            d.nearMatches = res.matches;
+          }
+        }
+      }
+      if (!found) {
+        const local = orgs.find((c) => c.name.toLowerCase() === v.toLowerCase());
+        if (local) found = { clientId: local.clientId, name: local.name, industry: local.industry, orgSize: local.orgSize, seq: seqOf(local.clientId) };
+      }
       if (found) {
-        d.clientId = found.clientId; d.existingClient = true;
-        d.industry = INDUSTRY_CODES.find((i) => i.label === found.industry) || null;
-        d.orgSize = ORG_SIZES.find((o) => o.label === found.orgSize) || null;
-        await sys(`Found **${found.name}** in the client database — reusing Client ID **${found.clientId}**.`);
+        d.clientId = found.clientId; d.existingClient = true; d.clientSeq = found.seq;
+        d.industry = INDUSTRY_CODES.find((i) => i.label === found.industry) || d.industry;
+        d.orgSize = ORG_SIZES.find((o) => o.label === found.orgSize) || d.orgSize;
+        await sys(`Found **${found.name}** in the client register — reusing Client ID **${found.clientId}**.`);
         go("contact");
-      } else go("industry");
+      } else if (!d.nearMatches) go("industry");
+      else { d.nearMatches = null; setInputOn(true); setPh("Exact name to reuse, or a new name"); }
     } else if (s === "pname") { d.name = v; go("pdesc"); }
     else if (s === "pdesc") { d.desc = v.toLowerCase() === "skip" ? "" : v; go("kind"); }
     else if (s === "lldq") {
@@ -117,9 +135,40 @@ export default function WizardModule({ onOpenProject }) {
     }
   };
 
-  /* ── ID generators (same formats as the ODM tool) ────────────────────── */
-  const makeClientId = () => `${d.orgSize.code}${d.industry.code}-${String(orgs.length + 1).padStart(3, "0")}`;
-  const autoPid = () => { const prefix = `EbZ-${d.clientId}-`; const n = projects.filter((p) => (p.projectId || "").startsWith(prefix)).length + 1; return prefix + String(n).padStart(2, "0"); };
+  /* ── ID allocation ────────────────────────────────────────────────────
+     The register sheets are the allocator of record, so both ids are read
+     from Drive. Offline (no Drive backend) we continue the highest sequence
+     visible in the database mirror instead — same format either way.      */
+  const localNextClientSeq = () =>
+    Math.max(0, ...orgs.map((o) => seqOf(o.clientId)).filter((n) => !isNaN(n))) + 1;
+  const localNextProjectSeq = () =>
+    Math.max(0, ...projects.map((p) => seqOf(p.projectId)).filter((n) => !isNaN(n))) + 1;
+
+  const allocateIds = async () => {
+    if (driveConfigured) {
+      const res = await driveNextIds({
+        industryCode: d.industry?.code, sizeCode: d.orgSize?.code,
+        clientName: d.clientName, clientId: d.existingClient ? d.clientId : "",
+      });
+      if (res.ok) {
+        if (!d.existingClient) d.clientId = res.clientId;
+        d.clientSeq = res.clientSeq;
+        d.projectId = res.projectId;
+        d.projectSeq = res.projectSeq;
+        d.lastProjectId = res.lastProjectId;
+        d.fromRegister = true;
+        return res;
+      }
+      d.registerError = res.error;
+    }
+    // Offline fallback — same scheme, sequences from what we can see.
+    d.clientSeq = d.existingClient ? seqOf(d.clientId) : localNextClientSeq();
+    if (!d.existingClient) d.clientId = makeClientId(d.industry.code, d.orgSize.code, d.clientSeq);
+    d.projectSeq = localNextProjectSeq();
+    d.projectId = makeProjectId(d.industry.code, d.orgSize.code, d.clientSeq, d.projectSeq);
+    d.fromRegister = false;
+    return null;
+  };
 
   /* ── the CREATE + PROVISION sequence ─────────────────────────────────── */
   const [creating, setCreating] = useState(false);
@@ -210,18 +259,33 @@ export default function WizardModule({ onOpenProject }) {
   );
 
   const ClientIdW = ({ m }) => {
-    const cid = d.clientId || makeClientId();
-    d.clientId = cid;
+    const [state, setState] = useState({ loading: true });
+    useEffect(() => {
+      let alive = true;
+      allocateIds().then((res) => {
+        if (alive) setState({ loading: false, res, err: d.registerError });
+      });
+      return () => { alive = false; };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    if (state.loading) {
+      return <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--txt2)" }}><TypingDots /> reading the Client-ID register in Drive…</div>;
+    }
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <Pill color="var(--purple)">{d.orgSize?.code} org</Pill>
           <Pill color="var(--blue)">{d.industry?.code} industry</Pill>
-          <Pill color="var(--green)">{cid.split("-")[1]} seq</Pill>
+          <Pill color="var(--purple)">{d.orgSize?.code} org</Pill>
+          <Pill color="var(--green)">{pad2(d.clientSeq)} seq</Pill>
         </div>
-        <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 600, letterSpacing: ".02em" }}>{cid}</div>
-        <div style={{ fontSize: 11.5, color: "var(--txt2)" }}>Appended to the Client-ID register sheet in Drive on create{driveConfigured ? "" : " (Drive backend pending — will register locally for now)"}.</div>
-        <div><Btn small onClick={() => { freeze(m.id, cid); meMsg(cid); go("contact"); }}>Continue</Btn></div>
+        <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 600, letterSpacing: ".02em" }}>{d.clientId}</div>
+        <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.6 }}>
+          {d.fromRegister
+            ? <>Next in sequence after the <b>{state.res?.clientsInRegister}</b> clients already in the register — appended there on create.</>
+            : <>⚠ Could not read the register{d.registerError ? ` (${d.registerError})` : ""} — this sequence is a local guess. Verify before creating.</>}
+        </div>
+        <div><Btn small onClick={() => { freeze(m.id, d.clientId); meMsg(d.clientId); go("contact"); }}>Continue</Btn></div>
       </div>
     );
   };
@@ -273,7 +337,17 @@ export default function WizardModule({ onOpenProject }) {
   const PidW = ({ m }) => {
     const [mode, setMode] = useState("auto");
     const [manual, setManual] = useState("");
-    const auto = autoPid();
+    const [ready, setReady] = useState(Boolean(d.projectId));
+    useEffect(() => {
+      // An existing client skips the Client-ID step, so the ids may not have
+      // been allocated yet — make sure they are before showing one.
+      if (!d.projectId) { allocateIds().then(() => setReady(true)); }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    if (!ready) {
+      return <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--txt2)" }}><TypingDots /> reading the project register in Drive…</div>;
+    }
+    const auto = d.projectId;
     const clean = manual.trim().toUpperCase();
     const dupe = clean && projects.some((p) => normId(p.projectId) === normId(clean));
     const badChars = clean && !/^[A-Z0-9][A-Z0-9-]*$/.test(clean);
@@ -285,7 +359,12 @@ export default function WizardModule({ onOpenProject }) {
         {mode === "auto" ? (
           <>
             <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 600 }}>{auto}</div>
-            <div style={{ fontSize: 11.5, color: "var(--txt2)" }}>Next in sequence for client {d.clientId} — same EbZ format as the ODM tool.</div>
+            <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.6 }}>
+              EbX-{d.industry?.code}-{d.orgSize?.code}-{pad2(d.clientSeq)}-{pad2(d.projectSeq)} — client {d.clientId}.
+              {d.fromRegister
+                ? <> Next after <b>{d.lastProjectId || "the last row"}</b> in the project register.</>
+                : <> ⚠ Register unreadable — local guess, verify before creating.</>}
+            </div>
           </>
         ) : (
           <>

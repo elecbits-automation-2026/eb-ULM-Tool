@@ -85,3 +85,13 @@ export const driveProvisionPcb = (params, onProgress) =>
 
 /** Read a register back: driveListRegistry("clients"|"projects"|"pcbs") */
 export const driveListRegistry = (register) => call("registry.list", { register });
+
+/** The next Client ID and Project ID, read live from the register sheets —
+    they are the allocator of record, not any count held in this app.
+    driveNextIds({ industryCode, sizeCode, clientName? }) →
+    { ok, clientExisted, clientId, clientSeq, projectId, projectSeq,
+      lastProjectId, clientsInRegister, projectsInRegister } */
+export const driveNextIds = (params) => call("id.next", params);
+
+/** Type-ahead over the client register — "does hitachi exist yet?" */
+export const driveSearchClients = (q) => call("clients.search", { q });

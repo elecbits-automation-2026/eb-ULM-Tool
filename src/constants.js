@@ -12,9 +12,27 @@ export const LIGHT = { "--bg": "#f8fafc", "--s1": "#ffffff", "--s2": "#f1f5f9", 
 /* The JPG logo sits on a white chip in dark mode. */
 export const logoChip = (dark, h) => ({ height: h, width: "auto", display: "block", background: dark ? "#fff" : "transparent", padding: dark ? "5px 9px" : 0, borderRadius: 8, boxSizing: "content-box" });
 
-/* ── Client ID codes — the historical Elecbits scheme ──────────────────────
-   Client ID = <org-size code><industry code>-<3-digit sequence>, e.g.
-   PL20-001 = Proto Level · Consumer Electronics · first client.             */
+/* ── The Elecbits ID scheme ────────────────────────────────────────────────
+   As used in the live registers:
+
+     Client   Eb-{industry}-{orgSize}-{seq}                    Eb-10-EL-03
+     Project  EbX-{industry}-{orgSize}-{clientSeq}-{projSeq}   EbX-22-PL-03-47
+
+   Both sequences are GLOBAL and continue the highest number already in the
+   register sheet — which is why the portal asks Drive for the next id rather
+   than counting its own rows. These builders are the offline fallback for
+   when the Drive backend is unreachable.                                    */
+export const pad2 = (n) => (String(n).length < 2 ? "0" + n : String(n));
+export const seqOf = (id) => {
+  const m = String(id || "").trim().match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : NaN;
+};
+export const makeClientId = (industryCode, sizeCode, seq) =>
+  `Eb-${industryCode}-${sizeCode}-${pad2(seq)}`;
+export const makeProjectId = (industryCode, sizeCode, clientSeq, projSeq) =>
+  `EbX-${industryCode}-${sizeCode}-${pad2(clientSeq)}-${pad2(projSeq)}`;
+
+/* ── Client ID codes — the historical Elecbits scheme ────────────────────── */
 export const INDUSTRY_CODES = [["Electric Vehicle", "01"], ["EMS", "02"], ["Just IoT", "03"], ["IIoT", "04"], ["Home Automation", "05"], ["Medical & Healthcare", "06"], ["Energy Meter & Metering", "07"], ["Wearables", "08"], ["Camera & Opticals", "09"], ["Agri/Farm/Food Tech", "10"], ["AR/VR/AI", "11"], ["EdTech", "12"], ["Industrial/Machine Setup", "13"], ["ERP Solutions", "14"], ["Robotics", "15"], ["Information Technology", "16"], ["Defence/Military", "17"], ["Automotive", "18"], ["Battery Manufacturer", "19"], ["Consumer Electronics", "20"], ["Other", "21"], ["Government & Alliance", "22"], ["Freelance/Individual", "23"], ["Logistics/Fleet", "24"], ["Fintech", "25"], ["Aerospace", "26"], ["BLDC", "27"], ["Renewables", "28"], ["Oil & Gas", "29"], ["Smart Home", "30"], ["Research", "31"], ["E-Mobility", "32"], ["Infrastructure", "33"], ["Toys and Games", "34"], ["Incubator", "35"], ["Security/Surveillance", "36"], ["Components Mfg", "37"], ["Drone Tech", "38"], ["Solar", "39"], ["IT Hardware", "40"], ["Display Manufacturers", "41"], ["Industrial Applications", "42"]].map(([label, code]) => ({ label, code }));
 
 export const ORG_SIZES = [

@@ -56,16 +56,16 @@ const CONFIG = {
   // to that tab's own headers, never to a fixed column order. Leave an id
   // blank to have a fresh register created inside REGISTRY_FOLDER_ID instead.
 
-  // "Eb-Client ID Sheet_"  ·  headers on row 1
+  // "Eb-Client ID Sheet_"  ·  headers on row 1  (converted to Google Sheets)
   //   S. no. | Organisation Name | Category/Industry | Client category/org
   //   size | Client ID | Client Folder | Point of Contact | Designation
-  CLIENT_REGISTER_ID:  "1AXZpSOM2v8zpfqgRUPBa187ULlmnarC7",
+  CLIENT_REGISTER_ID:  "16GtX_5TgYG_hKw_VdNDS0Dzl10MUPtTPco46qatb_Js",
   CLIENT_REGISTER_TAB: "Client Data and IDs",
 
-  // "Eb-Centralised Project Tracking Sheet_"  ·  headers on row 2
+  // "Eb-Centralised Project Tracking Sheet_"  ·  headers on row 2  (converted)
   //   S. No | Project ID | Organisation Name | Priority | Customer SPOC |
   //   Project Type | Description | Status | Project created…
-  PROJECT_REGISTER_ID:  "19bOZiIvpvA6oqqHAZUkJptOiFJPRPPjH",
+  PROJECT_REGISTER_ID:  "1BK_cML2WE_3nKLEMIQISm1Qk9kAs1B6OUak2bF9kCm0",
   PROJECT_REGISTER_TAB: "All projects",
 
   // "Eb_Hardware SKU Sheet-2026"  ·  headers on row 3
@@ -167,6 +167,8 @@ function handle_(body) {
     switch (body.action) {
       case "ping":              return json_(ping_());
       case "registry.check":    return json_(checkRegisters_());
+      case "id.next":           return json_(nextIds_(body));
+      case "clients.search":    return json_(searchClients_(body));
       case "client.register":   return json_(registerClient_(body));
       case "project.register":  return json_(registerProject_(body));
       case "project.provision": return json_(provisionProject_(body));
@@ -245,6 +247,127 @@ function checkRegisters_() {
   }
   return out;
 }
+
+/* ── IDs come FROM the registers ───────────────────────────────────────────
+   The registers are the allocator of record, so the next id is derived from
+   what is actually in them — never from a row count held anywhere else.
+
+     Client   Eb-{industry}-{orgSize}-{seq}        e.g. Eb-10-EL-03
+     Project  EbX-{industry}-{orgSize}-{clientSeq}-{projectSeq}
+                                                   e.g. EbX-22-PL-03-47
+
+   Both sequences are global and continue the highest number already present,
+   so the portal picks up exactly where the sheets left off.               */
+
+const pad2_ = (n) => (String(n).length < 2 ? "0" + n : String(n));
+
+/** The trailing number of an id: "Eb-10-EL-03" → 3, "EbX-22-PL-03-47" → 47. */
+function trailingSeq_(s) {
+  const m = String(s == null ? "" : s).trim().match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : NaN;
+}
+
+/** Every value in one column below the header, as trimmed strings. */
+function columnValues_(sheet, header, field) {
+  const col = columnFor_(header.values, field);
+  if (!col || sheet.getLastRow() <= header.row) return [];
+  return sheet.getRange(header.row + 1, col, sheet.getLastRow() - header.row, 1)
+    .getValues().map(function (r) { return String(r[0] == null ? "" : r[0]).trim(); });
+}
+
+/** Highest trailing sequence in a column, or 0 when the column is empty. */
+function maxSeqIn_(values) {
+  let max = 0;
+  values.forEach(function (v) {
+    const n = trailingSeq_(v);
+    if (!isNaN(n)) max = Math.max(max, n);
+  });
+  return max;
+}
+
+/**
+ * The next client and project ids, read live from the registers.
+ *
+ * params: { industryCode, sizeCode, clientName?, clientId? }
+ * An existing client (matched by name or id in the register) keeps its id and
+ * its client sequence, so its next project slots in under the same client.
+ */
+function nextIds_(b) {
+  const out = { ok: true };
+
+  // ── clients ──
+  const cReg = register_("CLIENT_REGISTER_ID", "Client-ID-Register", CLIENT_HEADERS);
+  const cHead = headerRowOf_(cReg.sheet, ["Client ID", "Client Name"]);
+  const ids   = columnValues_(cReg.sheet, cHead, "Client ID");
+  const names = columnValues_(cReg.sheet, cHead, "Client Name");
+
+  let existingIdx = -1;
+  const wantName = normHeader_(b.clientName || "");
+  const wantId   = String(b.clientId || "").trim().toUpperCase();
+  for (let i = 0; i < Math.max(ids.length, names.length); i++) {
+    const nm = normHeader_(names[i] || "");
+    if (wantId && String(ids[i] || "").toUpperCase() === wantId) { existingIdx = i; break; }
+    if (wantName && nm && nm === wantName) { existingIdx = i; break; }
+  }
+
+  if (existingIdx >= 0) {
+    out.clientExisted = true;
+    out.clientId   = ids[existingIdx] || "";
+    out.clientName = names[existingIdx] || "";
+    out.clientSeq  = trailingSeq_(out.clientId);
+  } else {
+    out.clientExisted = false;
+    out.clientSeq = maxSeqIn_(ids) + 1;
+    out.clientId  = (b.industryCode && b.sizeCode)
+      ? "Eb-" + b.industryCode + "-" + b.sizeCode + "-" + pad2_(out.clientSeq)
+      : "";
+  }
+  out.clientRegisterUrl = cReg.ss.getUrl();
+  out.clientsInRegister = ids.filter(String).length;
+
+  // ── projects ──
+  const pReg  = register_("PROJECT_REGISTER_ID", "Project-ID-Register", PROJECT_HEADERS);
+  const pHead = headerRowOf_(pReg.sheet, ["Project ID", "Client Name"]);
+  const pIds  = columnValues_(pReg.sheet, pHead, "Project ID");
+
+  out.projectSeq = maxSeqIn_(pIds) + 1;
+  out.lastProjectId = pIds.filter(String).slice(-1)[0] || "";
+  // The client's own segment: its sequence, or the industry/size just picked.
+  const cSeq = isNaN(out.clientSeq) ? null : pad2_(out.clientSeq);
+  out.projectId = (b.industryCode && b.sizeCode && cSeq)
+    ? "EbX-" + b.industryCode + "-" + b.sizeCode + "-" + cSeq + "-" + pad2_(out.projectSeq)
+    : "";
+  out.projectRegisterUrl = pReg.ss.getUrl();
+  out.projectsInRegister = pIds.filter(String).length;
+
+  return out;
+}
+
+/** Type-ahead over the client register: "does hitachi exist yet?" */
+function searchClients_(b) {
+  const q = normHeader_(b.q || "");
+  const reg = register_("CLIENT_REGISTER_ID", "Client-ID-Register", CLIENT_HEADERS);
+  const head = headerRowOf_(reg.sheet, ["Client ID", "Client Name", "Industry", "Org Size"]);
+  const ids   = columnValues_(reg.sheet, head, "Client ID");
+  const names = columnValues_(reg.sheet, head, "Client Name");
+  const inds  = columnValues_(reg.sheet, head, "Industry");
+  const sizes = columnValues_(reg.sheet, head, "Org Size");
+
+  const hits = [];
+  for (let i = 0; i < names.length; i++) {
+    if (!names[i]) continue;
+    const n = normHeader_(names[i]);
+    if (q && n.indexOf(q) < 0) continue;
+    hits.push({
+      clientId: ids[i] || "", name: names[i],
+      industry: inds[i] || "", orgSize: sizes[i] || "",
+      seq: trailingSeq_(ids[i] || ""),
+    });
+    if (hits.length >= 25) break;
+  }
+  return { ok: true, matches: hits, total: names.filter(String).length, registerUrl: reg.ss.getUrl() };
+}
+
 
 /* ── the registers — the Drive-side source of truth for IDs ───────────────── */
 
