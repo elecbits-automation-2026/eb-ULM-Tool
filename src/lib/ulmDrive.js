@@ -105,6 +105,12 @@ export const driveProvisionPcb = (params, onProgress) =>
 /** Read a register back: driveListRegistry("clients"|"projects"|"pcbs") */
 export const driveListRegistry = (register) => call("registry.list", { register });
 
+/** Fix one register row in place, found by its id. Values use this tool's
+    logical column names (aliased onto the sheet's real headers):
+    driveUpdateRegister("clients", "Eb-20-ML-521", { "Client Name": "Curefit" }) */
+export const driveUpdateRegister = (register, id, values) =>
+  call("registry.update", { register, id, values });
+
 /** The next Client ID and Project ID, read live from the register sheets —
     they are the allocator of record, not any count held in this app.
     driveNextIds({ industryCode, sizeCode, clientName? }) →

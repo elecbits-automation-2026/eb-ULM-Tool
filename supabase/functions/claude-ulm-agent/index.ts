@@ -53,6 +53,15 @@ const TOOLS = [
     description: "Read one of the Elecbits ID registers as rows: 'clients', 'projects' or 'pcbs'. The source of truth for IDs — use it instead of hunting the sheets by hand.",
     input_schema: { type: "object", properties: { register: { type: "string", enum: ["clients", "projects", "pcbs"] } }, required: ["register"] },
   },
+  {
+    name: "register_update",
+    description: "Fix ONE register row in place, found by its id. Give only the columns to change, by these logical names — clients: Client Name, Industry, Org Size, Contact, Email, Phone; projects: Project Name, Client Name, Kind, Status, Deadline, Description, Folder Link; pcbs: Board Name, Folder Link. Use only when the user explicitly asks to correct or change register data; ids are never changed.",
+    input_schema: { type: "object", properties: {
+      register: { type: "string", enum: ["clients", "projects", "pcbs"] },
+      id: { type: "string", description: "The row's Client ID / Project ID / PCB ID" },
+      values: { type: "object", description: "logical column name → new value", additionalProperties: { type: "string" } },
+    }, required: ["register", "id", "values"] },
+  },
 ];
 
 const SYSTEM = [

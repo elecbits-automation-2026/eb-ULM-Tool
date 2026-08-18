@@ -331,6 +331,19 @@ export function UlmProvider({ session, children }) {
     return c.clientId;
   }, [live, rpc, refresh, data.orgs]);
 
+  const renameClient = useCallback(async (clientId, name) => {
+    if (live) {
+      await rpc("portal_rename_client", { p_client_id: clientId, p_name: name });
+      await refresh();
+      return;
+    }
+    setData((d) => ({
+      ...d,
+      orgs: d.orgs.map((o) => (o.clientId === clientId ? { ...o, name } : o)),
+      projects: d.projects.map((p) => (p.clientId === clientId ? { ...p, clientName: name } : p)),
+    }));
+  }, [live, rpc, refresh]);
+
   const createProject = useCallback(async (p) => {
     if (live) {
       const row = await rpc("portal_create_project", {
@@ -409,8 +422,8 @@ export function UlmProvider({ session, children }) {
     ...data,
     toasts, toast,
     submitRequest, saveReview, acceptRequest, rejectRequest, decide,
-    createClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder,
-  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder]);
+    createClient, renameClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder,
+  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, renameClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder]);
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }

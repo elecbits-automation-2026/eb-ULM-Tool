@@ -4,11 +4,11 @@
    appended to the Client-ID register sheet in Drive.                          */
 
 import { useMemo, useState } from "react";
-import { Building2, Plus, Shield, ExternalLink, FileText, Search } from "lucide-react";
+import { Building2, Plus, Shield, ExternalLink, FileText, Search, Pencil, Check, X } from "lucide-react";
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, Field, Modal, Empty, SectionTitle, Section, chipS } from "../ui.jsx";
 import { MONO, INDUSTRY_CODES, ORG_SIZES } from "../constants.js";
-import { driveConfigured, driveRegisterClient } from "../lib/ulmDrive.js";
+import { driveConfigured, driveRegisterClient, driveUpdateRegister } from "../lib/ulmDrive.js";
 
 function NewClientModal({ onClose }) {
   const { orgs, createClient, toast, people, me } = useUlm();
@@ -80,9 +80,39 @@ function NewClientModal({ onClose }) {
 }
 
 export default function ClientsModule() {
-  const { orgs, projects, provisioning, isAdmin } = useUlm();
+  const { orgs, projects, provisioning, isAdmin, renameClient, toast } = useUlm();
   const [q, setQ] = useState("");
   const [add, setAdd] = useState(false);
+  const [editing, setEditing] = useState(null); // clientId being renamed
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  /* One rename, three targets: the database (orgs + every project row), the
+     Client-ID sheet, and this client's rows in the CPTS. */
+  const saveRename = async (o) => {
+    const name = newName.trim();
+    if (!name || name === o.name) { setEditing(null); return; }
+    setSaving(true);
+    try {
+      await renameClient(o.clientId, name);
+      if (driveConfigured && o.clientId) {
+        const rc = await driveUpdateRegister("clients", o.clientId, { "Client Name": name });
+        if (!rc.ok) toast(`Client sheet not updated: ${rc.error}`, "amber");
+        const mine = projects.filter((p) => p.clientId === o.clientId && p.projectId);
+        for (const p of mine) {
+          const rp = await driveUpdateRegister("projects", p.projectId, { "Client Name": name });
+          if (!rp.ok) toast(`CPTS row ${p.projectId} not updated: ${rp.error}`, "amber");
+        }
+        toast(`Renamed to “${name}” — database, client sheet and ${mine.length} CPTS row${mine.length === 1 ? "" : "s"}`, "green");
+      } else {
+        toast(`Renamed to “${name}”`, "green");
+      }
+      setEditing(null);
+    } catch (e) {
+      toast(`Rename failed: ${e.message}`, "red");
+    }
+    setSaving(false);
+  };
 
   const registerUrl = useMemo(() => provisioning.map((p) => p.clientRegisterUrl).find(Boolean) || "", [provisioning]);
   const list = useMemo(() => {
@@ -116,7 +146,20 @@ export default function ClientsModule() {
               <div key={o.id} className="rowHover" style={{ display: "grid", gridTemplateColumns: "120px 2fr 1.6fr 1fr 90px", gap: 10, padding: "11px 16px", borderBottom: "1px solid var(--bdr)", alignItems: "center", fontSize: 12.5 }}>
                 <span style={{ fontFamily: MONO, fontWeight: 600, color: "var(--acc)" }}>{o.clientId || "—"}</span>
                 <div>
-                  <div style={{ fontWeight: 700 }}>{o.name}</div>
+                  {editing === o.clientId ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input className="inp" autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveRename(o); if (e.key === "Escape") setEditing(null); }} style={{ padding: "5px 9px", fontSize: 12.5 }} />
+                      <button title="Save everywhere — DB, client sheet, CPTS" disabled={saving} onClick={() => saveRename(o)} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--green)" }}><Check size={15} /></button>
+                      <button disabled={saving} onClick={() => setEditing(null)} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--txt3)" }}><X size={15} /></button>
+                    </div>
+                  ) : (
+                    <div style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                      {o.name}
+                      {isAdmin && (
+                        <button title="Rename — updates the database, the client sheet and this client's CPTS rows" onClick={() => { setEditing(o.clientId); setNewName(o.name); }} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--txt3)", padding: 2 }}><Pencil size={12} /></button>
+                      )}
+                    </div>
+                  )}
                   <div style={{ fontSize: 10.5, color: "var(--txt3)" }}>{o.orgSize || ""}</div>
                 </div>
                 <span style={{ color: "var(--txt2)" }}>{o.industry || "—"}</span>

@@ -221,6 +221,7 @@ function handle_(body) {
       case "project.provision": return json_(provisionProject_(body));
       case "pcb.provision":     return json_(provisionPcb_(body));
       case "registry.list":     return json_(listRegistry_(body));
+      case "registry.update":   return json_(updateRegistry_(body));
       case "ai.chat":           return json_(aiChat_(body));
       case "ai.agent":          return json_(aiAgent_(body));
       // One Drive tool, executed for the Supabase claude-ulm-agent Edge
@@ -585,6 +586,15 @@ const AI_TOOLS = [
     }, required: ["content"] },
   },
   {
+    name: "register_update",
+    description: "Fix ONE register row in place, found by its id. Give only the columns to change, by these logical names — clients: Client Name, Industry, Org Size, Contact, Email, Phone; projects: Project Name, Client Name, Kind, Status, Deadline, Description, Folder Link; pcbs: Board Name, Folder Link. Use only when the user explicitly asks to correct or change register data; ids are never changed.",
+    input_schema: { type: "object", properties: {
+      register: { type: "string", enum: ["clients", "projects", "pcbs"] },
+      id: { type: "string", description: "The row's Client ID / Project ID / PCB ID" },
+      values: { type: "object", description: "logical column name → new value", additionalProperties: { type: "string" } },
+    }, required: ["register", "id", "values"] },
+  },
+  {
     name: "register_read",
     description: "Read one of the Elecbits ID registers as rows: 'clients' (client ids/names), 'projects' (project ids), 'pcbs' (board SKUs). This is the source of truth for IDs — use it instead of hunting the sheets by hand.",
     input_schema: { type: "object", properties: {
@@ -678,6 +688,10 @@ function runAiTool_(name, inp) {
     case "drive_read":    return toolRead_(inp);
     case "drive_write":   return toolWrite_(inp);
     case "register_read": return toolRegister_(inp);
+    case "register_update": {
+      const r = updateRegistry_(inp);
+      return r.ok ? { row: r.row, changed: r.changed, unmapped: r.unmapped, url: r.registerUrl } : { error: r.error };
+    }
     default: return { error: "Unknown tool " + name };
   }
 }
@@ -689,6 +703,7 @@ function toolDetail_(name, inp, out) {
   if (name === "drive_read")    return (out && out.name) || inp.fileId || "";
   if (name === "drive_write")   return inp.title || (out && out.name) || inp.fileId || "";
   if (name === "register_read") return inp.register || "";
+  if (name === "register_update") return (inp.register || "") + " " + (inp.id || "");
   return "";
 }
 
@@ -1069,6 +1084,55 @@ function listRegistry_(b) {
     ? reg.sheet.getRange(head.row + 1, 1, lastRow - head.row, lastCol).getDisplayValues()
     : [];
   return { ok: true, headers: hvals, rows: rows, headerRow: head.row, registerUrl: reg.ss.getUrl() };
+}
+
+/**
+ * Fix ONE register row in place, found by its id.
+ *   { register: clients|projects|pcbs, id: "Eb-20-ML-521",
+ *     values: { "Client Name": "Curefit", ... } }
+ * Field names are this tool's logical ones — they map onto whatever columns
+ * the sheet actually has (same aliases as appending). Only the named columns
+ * change; everything else in the row is left exactly as it is.
+ */
+function updateRegistry_(b) {
+  const which = b.register === "clients" ? "CLIENT_REGISTER_ID"
+              : b.register === "pcbs"    ? "PCB_REGISTER_ID"
+              : "PROJECT_REGISTER_ID";
+  const title = b.register === "clients" ? "Client-ID-Register"
+              : b.register === "pcbs"    ? "PCB-ID-Register"
+              : "Project-ID-Register";
+  const headers = b.register === "clients" ? CLIENT_HEADERS
+                : b.register === "pcbs"    ? PCB_HEADERS
+                : PROJECT_HEADERS;
+  const idField = b.register === "clients" ? "Client ID"
+                : b.register === "pcbs"    ? "PCB ID"
+                : "Project ID";
+  const values = b.values || {};
+  if (!b.id) return { ok: false, error: "registry.update needs the row's id" };
+  if (!Object.keys(values).length) return { ok: false, error: "registry.update needs values to change" };
+
+  const reg = register_(which, title, headers);
+  const header = headerRowOf_(reg.sheet, [idField].concat(Object.keys(values)));
+  const idCol = columnFor_(header.values, idField);
+  if (!idCol) return { ok: false, error: "No " + idField + " column in the register" };
+  const last = reg.sheet.getLastRow();
+  if (last <= header.row) return { ok: false, error: "The register is empty" };
+
+  const ids = reg.sheet.getRange(header.row + 1, idCol, last - header.row, 1).getValues();
+  let row = -1;
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim().toUpperCase() === String(b.id).trim().toUpperCase()) { row = header.row + 1 + i; break; }
+  }
+  if (row < 0) return { ok: false, error: String(b.id) + " is not in the " + (b.register || "projects") + " register" };
+
+  const changed = [], unmapped = [];
+  Object.keys(values).forEach(function (f) {
+    if (values[f] === undefined || values[f] === null) return;
+    const c = columnFor_(header.values, f);
+    if (c) { reg.sheet.getRange(row, c).setValue(values[f]); changed.push(f); }
+    else unmapped.push(f);
+  });
+  return { ok: true, row: row, changed: changed, unmapped: unmapped, registerUrl: reg.ss.getUrl() };
 }
 
 /* ── project provisioning — the PM tree ───────────────────────────────────── */
