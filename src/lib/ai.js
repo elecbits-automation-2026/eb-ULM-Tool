@@ -20,9 +20,10 @@ import { supabaseAnonKey } from "./supabase.js";
 
 const clean = (s) => String(s || "").trim().replace(/^["']+|["']+$/g, "");
 const proxyUrl = clean(import.meta.env.VITE_CLAUDE_PROXY_URL);
-// The agent function usually sits next to the proxy: …/claude → …/claude-agent.
+// The agent function sits next to the proxy with "-agent" appended:
+// …/claude-ulm → …/claude-ulm-agent.
 const agentUrl = clean(import.meta.env.VITE_CLAUDE_AGENT_URL)
-  || (proxyUrl ? proxyUrl.replace(/\/claude\/?$/, "/claude-agent") : "");
+  || (proxyUrl ? proxyUrl.replace(/\/+$/, "") + "-agent" : "");
 
 export const MODEL = clean(import.meta.env.VITE_CLAUDE_MODEL) || "claude-opus-5";
 
@@ -52,8 +53,8 @@ export async function aiProbe(force = false) {
       try {
         const res = await fetch(proxyUrl, { headers: fnHeaders() });
         const h = await res.json().catch(() => null);
-        if (h && h.keySet === false) return { ok: false, error: "The claude Edge Function is deployed but ANTHROPIC_API_KEY is not in its secrets" };
-        if (res.status === 401) return { ok: false, error: "The claude Edge Function rejected the anon key (401) — check VITE_SUPABASE_ANON_KEY, or redeploy with --no-verify-jwt" };
+        if (h && h.keySet === false) return { ok: false, error: "The Claude proxy Edge Function is deployed but ANTHROPIC_API_KEY is not in its secrets" };
+        if (res.status === 401) return { ok: false, error: "The Claude proxy Edge Function rejected the anon key (401) — check VITE_SUPABASE_ANON_KEY, or redeploy with --no-verify-jwt" };
       } catch { /* network-level failure — report it below via ok:true+use */ }
       return { ok: true, via: "edge function", model: MODEL };
     }
@@ -68,8 +69,8 @@ export async function aiProbe(force = false) {
   return res;
 }
 
-/* The Assistant's agent call: prefer the Supabase claude-agent function, fall
-   back to the Apps Script ai.agent loop. Same request and response shape. */
+/* The Assistant's agent call: prefer the Supabase claude-ulm-agent function,
+   fall back to the Apps Script ai.agent loop. Same request and response shape. */
 export async function aiAgent({ messages, effort }) {
   if (proxyUrl && agentUrl) {
     try {
@@ -78,12 +79,12 @@ export async function aiAgent({ messages, effort }) {
         body: JSON.stringify({ messages, effort }),
       });
       const body = await res.json().catch(() => null);
-      // A 404 means claude-agent simply isn't deployed — use the Drive loop.
+      // A 404 means the agent function simply isn't deployed — use the Drive loop.
       if (res.status !== 404 && body && typeof body.ok === "boolean") return body;
     } catch { /* fall through to the Drive backend */ }
   }
   if (driveConfigured) return driveAiAgent({ messages, effort });
-  return { ok: false, error: "No agent backend — deploy the claude-agent Edge Function or the Drive web app" };
+  return { ok: false, error: "No agent backend — deploy the claude-ulm-agent Edge Function or the Drive web app" };
 }
 
 /**

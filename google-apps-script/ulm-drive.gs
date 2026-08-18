@@ -194,9 +194,9 @@ function handle_(body) {
       case "registry.list":     return json_(listRegistry_(body));
       case "ai.chat":           return json_(aiChat_(body));
       case "ai.agent":          return json_(aiAgent_(body));
-      // One Drive tool, executed for the Supabase claude-agent Edge Function —
-      // that variant runs the Claude loop in Supabase and only borrows this
-      // script's Drive hands.
+      // One Drive tool, executed for the Supabase claude-ulm-agent Edge
+      // Function — that variant runs the Claude loop in Supabase and only
+      // borrows this script's Drive hands.
       case "tool.run":          return json_({ ok: true, result: runAiTool_(String(body.name || ""), body.input || {}) });
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }

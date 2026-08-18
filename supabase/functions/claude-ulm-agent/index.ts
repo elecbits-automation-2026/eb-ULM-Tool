@@ -1,10 +1,10 @@
-/* ─── claude-agent — Claude with Drive hands, Supabase edition ───────────────
+/* ─── claude-ulm-agent — Claude with Drive hands, Supabase edition ───────────
    The Assistant's agentic loop: Claude runs HERE (key in Supabase secrets),
    and each Drive tool call is executed by the Apps Script web app's tool.run
    action — Drive access stays with the Google account, Anthropic stays with
    Supabase, the browser holds neither key.
 
-   Deploy:   supabase functions deploy claude-agent
+   Deploy:   supabase functions deploy claude-ulm-agent
    Secrets:  supabase secrets set ANTHROPIC_API_KEY=sk-ant-…
              supabase secrets set ULM_DRIVE_URL=https://script.google.com/macros/s/…/exec
              supabase secrets set ULM_DRIVE_TOKEN=…            (the SHARED_TOKEN)

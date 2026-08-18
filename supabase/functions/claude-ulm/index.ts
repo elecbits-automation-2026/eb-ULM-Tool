@@ -1,11 +1,13 @@
-/* ─── claude — the Messages-API proxy Edge Function ──────────────────────────
+/* ─── claude-ulm — the Messages-API proxy Edge Function ──────────────────────
    The portal's plain Claude calls (wizard conversation, LLD extraction,
    designer drafts) come here; the Anthropic key stays in Supabase secrets and
-   never reaches the browser.
+   never reaches the browser. Named claude-ulm so it can live beside the ODM
+   app's own claude function in the same Supabase project.
 
-   Deploy (CLI):        supabase functions deploy claude
+   Deploy (CLI):        supabase functions deploy claude-ulm
    Secret:              supabase secrets set ANTHROPIC_API_KEY=sk-ant-…
-   Or in the dashboard: Edge Functions → Deploy new function → paste this →
+   Or in the dashboard: Edge Functions → Deploy new function, named
+                        "claude-ulm" → paste this →
                         then Edge Functions → Secrets → ANTHROPIC_API_KEY.
 
    Keep "Enforce JWT verification" ON — the portal sends its Supabase anon key

@@ -184,24 +184,26 @@ Everything still works without AI — templates and manual entry take over.
 The key never ships to the browser. Two server-side routes — the portal
 prefers Supabase when configured and falls back to the Apps Script:
 
-- **Supabase Edge Functions** (`supabase/functions/claude` +
-  `supabase/functions/claude-agent`). The Anthropic key lives in Supabase
-  secrets; `claude-agent` runs the Assistant's tool loop and borrows the Drive
-  web app's hands via its `tool.run` action.
+- **Supabase Edge Functions** (`supabase/functions/claude-ulm` +
+  `supabase/functions/claude-ulm-agent` — the `-ulm` suffix keeps them clear
+  of the ODM app's own `claude` function). The Anthropic key lives in Supabase
+  secrets; `claude-ulm-agent` runs the Assistant's tool loop and borrows the
+  Drive web app's hands via its `tool.run` action.
 
   ```
-  supabase functions deploy claude claude-agent
+  supabase functions deploy claude-ulm claude-ulm-agent
   supabase secrets set ANTHROPIC_API_KEY=sk-ant-…
   supabase secrets set ULM_DRIVE_URL=https://script.google.com/macros/s/…/exec
   supabase secrets set ULM_DRIVE_TOKEN=…            # the SHARED_TOKEN
   ```
 
-  (Dashboard route: Edge Functions → *Deploy new function* → paste each
-  `index.ts`, then Edge Functions → *Secrets* for the three values. Keep JWT
-  verification ON — the portal sends its anon key automatically.)
+  (Dashboard route: Edge Functions → *Deploy new function*, named exactly
+  `claude-ulm` / `claude-ulm-agent` → paste each `index.ts`, then Edge
+  Functions → *Secrets* for the three values. Keep JWT verification ON — the
+  portal sends its anon key automatically.)
 
-  Then in Vercel: `VITE_CLAUDE_PROXY_URL=https://<project-ref>.functions.supabase.co/claude`.
-  The agent URL is derived (`…/claude-agent`); override with
+  Then in Vercel: `VITE_CLAUDE_PROXY_URL=https://<project-ref>.functions.supabase.co/claude-ulm`.
+  The agent URL is derived by appending `-agent`; override with
   `VITE_CLAUDE_AGENT_URL` only if you name it differently.
 
 - **Drive web app only (no Supabase needed).** In the Apps Script project:
