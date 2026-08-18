@@ -43,10 +43,17 @@ export default function RegistersModule() {
         const { data: meta, error: e1 } = await supabase.schema("ulm").from("registers").select("*").eq("register", w).maybeSingle();
         if (e1) throw new Error(e1.message);
         if (!meta) { setMirror(null); setLoading(false); return; }
-        const { data: rows, error: e2 } = await supabase.schema("ulm").from("register_rows")
-          .select("row_no,cells").eq("register", w).order("row_no").range(0, 9999);
-        if (e2) throw new Error(e2.message);
-        setMirror({ headers: meta.headers || [], rows: (rows || []).map((r) => r.cells || []), url: meta.sheet_url || "", syncedAt: meta.synced_at, count: meta.row_count ?? rows?.length ?? 0 });
+        // PostgREST caps every response at 1000 rows — fetch in chunks until
+        // the whole mirror is here, or the search quietly misses the tail.
+        const rows = [];
+        for (let from = 0; from < 100000; from += 1000) {
+          const { data: chunk, error: e2 } = await supabase.schema("ulm").from("register_rows")
+            .select("row_no,cells").eq("register", w).order("row_no").range(from, from + 999);
+          if (e2) throw new Error(e2.message);
+          (chunk || []).forEach((r) => rows.push(r.cells || []));
+          if (!chunk || chunk.length < 1000) break;
+        }
+        setMirror({ headers: meta.headers || [], rows, url: meta.sheet_url || "", syncedAt: meta.synced_at, count: rows.length });
       } catch (e) {
         setMirror(null);
         toast(`Could not read the mirror: ${e.message} — run supabase/11-registers.sql?`, "red");
