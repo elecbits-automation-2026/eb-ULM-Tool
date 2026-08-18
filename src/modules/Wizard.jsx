@@ -18,7 +18,7 @@ import { useUlm } from "../data.jsx";
 import { Pill, Btn, Field, Seg, KV, MD, TypingDots, chipS, Done, ChoiceCard, uid, sleep, todayStr, fmtDate } from "../ui.jsx";
 import { MONO, INDUSTRY_CODES, ORG_SIZES, TEAM_SLOTS, KINDS, kindOf, LLD_QUESTIONS, makeClientId, makeProjectId, seqOf, pad2 } from "../constants.js";
 import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject, driveNextIds, driveSearchClients } from "../lib/ulmDrive.js";
-import { aiProbe, claude, interpretMessage, readClientMessage, suggestClientProfile, extractLld, designerSystem, designerPrompt, fallbackDesigner } from "../lib/ai.js";
+import { aiProbe, claude, interpretMessage, extractProjectBrief, suggestClientProfile, extractLld, designerSystem, designerPrompt, fallbackDesigner } from "../lib/ai.js";
 
 const PHASES = ["Client", "Contact", "Project", "ID", "Team", "LLD — Customer", "LLD — Designer", "Review"];
 const phaseOf = (step) => ({ client: 0, industry: 0, orgsize: 0, clientid: 0, contact: 1, pname: 2, pdesc: 2, kind: 2, deadline: 2, pid: 3, team: 4, lldc: 5, lldq: 5, lldsum: 5, lldd: 6, review: 7, provision: 7, done: 7 }[step] ?? 0);
@@ -67,7 +67,7 @@ export default function WizardModule({ onOpenProject }) {
   /* The message id of the currently open widget, so a typed answer can freeze
      the same card a click would have. */
   const lastWidgetId = useRef(null);
-  const d = useRef({ clientName: "", industry: null, orgSize: null, clientId: "", existingClient: false, contact: { name: "", designation: "", phone: "", email: "" }, name: "", desc: "", kind: "", deadline: "", projectId: "", idMode: "auto", team: [], lldC: null, lldD: null, lldAnswers: {}, ownerId: "", clientRegisterUrl: "", projectRegisterUrl: "" }).current;
+  const d = useRef({ clientName: "", industry: null, orgSize: null, clientId: "", existingClient: false, contact: { name: "", designation: "", phone: "", email: "" }, name: "", desc: "", descDone: false, kind: "", deadline: "", projectId: "", idMode: "auto", team: [], lldC: null, lldD: null, lldAnswers: {}, ownerId: "", clientRegisterUrl: "", projectRegisterUrl: "" }).current;
 
   useEffect(() => { bodyRef.current?.scrollTo({ top: 1e9, behavior: "smooth" }); }, [msgs, typing]);
 
@@ -85,7 +85,7 @@ export default function WizardModule({ onOpenProject }) {
   const go = useCallback(async (s) => {
     setStep(s); setInputOn(false); setVal("");
     switch (s) {
-      case "client": await sys("Hi! I'm the Elecbits ULM assistant — let's create and sanction a new project. **What is the client / company name?**"); setInputOn(true); setPh("e.g. Acme Devices"); break;
+      case "client": await sys("Hi! I'm the Elecbits ULM assistant — let's create and sanction a new project. **What is the client / company name?**" + (aiOnRef.current ? " Or just brain-dump everything you know — client, project, route, deadline, contact — in one message and I'll fill the form." : "")); setInputOn(true); setPh(aiOnRef.current ? "A name, or the whole brief in one go…" : "e.g. Acme Devices"); break;
       case "industry": await sys(`**${d.clientName}** is new — let's mint their Client ID. Pick the industry.`, "industry"); break;
       case "orgsize": await sys("And the organisation size?", "orgsize"); break;
       case "clientid": await sys("Here is the Client ID. It gets registered in the **client register in Drive** when the project is created.", "clientid"); break;
@@ -124,7 +124,9 @@ export default function WizardModule({ onOpenProject }) {
 
   const booted = useRef(false);
   useEffect(() => {
-    if (isAdmin && !booted.current) { booted.current = true; go("client"); }
+    // Let the AI probe land (capped) before the greeting, so the opening
+    // message can honestly offer the brain-dump path.
+    if (isAdmin && !booted.current) { booted.current = true; Promise.race([aiProbe().catch(() => {}), sleep(1500)]).then(() => go("client")); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
@@ -132,6 +134,19 @@ export default function WizardModule({ onOpenProject }) {
      One Claude read of the typed message against the pending step: a pick
      advances the wizard exactly like the click would have, an answer fills
      the field, a question gets a real answer and the step re-asked.       */
+  /* The first pre-ID step still unanswered — the brain-dump path skips
+     everything already captured and only asks what's missing. */
+  const nextMissing = () => {
+    if (!d.contact?.name) return "contact";
+    if (!d.name) return "pname";
+    if (!d.descDone) return "pdesc";
+    if (!d.kind) return "kind";
+    if (!d.deadline) return "deadline";
+    return "pid";
+  };
+  /* A new client's ID needs the two codes first. */
+  const nextNewClientStep = () => (!d.industry ? "industry" : !d.orgSize ? "orgsize" : "clientid");
+
   const dataSummary = () => [
     d.clientName && `client ${d.clientName}`, d.industry && `industry ${d.industry.label}`,
     d.orgSize && `org size ${d.orgSize.label}`, d.name && `project "${d.name}"`,
@@ -141,7 +156,7 @@ export default function WizardModule({ onOpenProject }) {
   const applyPick = {
     industry: (code) => { const i = INDUSTRY_CODES.find((x) => x.code === code); if (!i) return false; d.industry = i; freeze(lastWidgetId.current, `${i.label} (${i.code})`); go("orgsize"); return true; },
     orgsize: (code) => { const o = ORG_SIZES.find((x) => x.code === code); if (!o) return false; d.orgSize = o; d.clientId = ""; freeze(lastWidgetId.current, `${o.label} (${o.code})`); go("clientid"); return true; },
-    kind: (code) => { const k = KINDS.find((x) => x.k === code); if (!k) return false; d.kind = k.k; freeze(lastWidgetId.current, k.full); go("deadline"); return true; },
+    kind: (code) => { const k = KINDS.find((x) => x.k === code); if (!k) return false; d.kind = k.k; freeze(lastWidgetId.current, k.full); go(nextMissing()); return true; },
   };
 
   const SMART_STEPS = {
@@ -170,8 +185,8 @@ export default function WizardModule({ onOpenProject }) {
         if (/^\d{4}-\d{2}-\d{2}$/.test(iso) && iso >= todayStr()) {
           d.deadline = iso; freeze(lastWidgetId.current, fmtDate(iso)); go("pid"); return true;
         }
-      } else if (s === "pname") { d.name = value; go("pdesc"); return true; }
-      else if (s === "pdesc") { d.desc = value; go("kind"); return true; }
+      } else if (s === "pname") { d.name = value; go(nextMissing()); return true; }
+      else if (s === "pdesc") { d.desc = value; d.descDone = true; go(nextMissing()); return true; }
     }
     // A question or chat — speak Claude's reply, keep the step open.
     await sys(r.reply || "Tell me a bit more?");
@@ -194,20 +209,32 @@ export default function WizardModule({ onOpenProject }) {
         return;
       }
       // With Claude: anything that reads like a sentence, question or greeting
-      // goes through it to pull out who they actually mean.
+      // goes through the brief extractor — it pulls out the client AND every
+      // other fact in the message (project, route, deadline, contact), so a
+      // full brain-dump fills the form in one go.
       if (aiOnRef.current && (v.split(/\s+/).length > 3 || /[?!]/.test(v) || looksLikeChatter(v))) {
         setTyping(true);
         try {
-          const r = await readClientMessage(v);
+          const r = await extractProjectBrief({ text: v, industries: INDUSTRY_CODES, sizes: ORG_SIZES, kinds: KINDS });
           setTyping(false);
-          if (r.company) {
-            name = r.company.trim();
-            if (r.intent !== "name") await sys(`${r.reply || `Looking for **${name}**…`}`, null, "understood via Claude");
-          } else {
-            await sys(r.reply || "I still need a client / company name — what is it?");
+          if (r.industryCode) d.industry = INDUSTRY_CODES.find((x) => x.code === r.industryCode) || d.industry;
+          if (r.sizeCode) d.orgSize = ORG_SIZES.find((x) => x.code === r.sizeCode) || d.orgSize;
+          if (r.projectName) d.name = String(r.projectName).trim();
+          if (r.description) { d.desc = String(r.description).trim(); d.descDone = true; }
+          if (r.kind && kindOf(r.kind)) d.kind = r.kind;
+          if (r.deadline && /^\d{4}-\d{2}-\d{2}$/.test(r.deadline) && r.deadline >= todayStr()) d.deadline = r.deadline;
+          if (r.contactName) d.contact = { ...d.contact, name: String(r.contactName).trim(), email: r.contactEmail || d.contact.email, phone: r.contactPhone || d.contact.phone };
+          const got = [
+            r.projectName && `project “${d.name}”`, r.kind && kindOf(d.kind)?.label,
+            r.deadline && d.deadline && `deadline ${fmtDate(d.deadline)}`, r.contactName && `contact ${d.contact.name}`,
+          ].filter(Boolean);
+          if (got.length) await sys(`Captured: ${got.join(" · ")} — I'll skip what's already answered.`);
+          if (!r.clientName) {
+            await sys(r.reply || "I still need the client / company name — what is it?");
             setInputOn(true); setPh("e.g. Acme Devices");
             return;
           }
+          name = String(r.clientName).trim();
         } catch { setTyping(false); /* treat the raw text as the name */ }
       }
       d.clientName = name;
@@ -234,8 +261,8 @@ export default function WizardModule({ onOpenProject }) {
         d.industry = INDUSTRY_CODES.find((i) => i.label === found.industry) || d.industry;
         d.orgSize = ORG_SIZES.find((o) => o.label === found.orgSize) || d.orgSize;
         await sys(`Found **${found.name}** in the client register — reusing Client ID **${found.clientId}**.`);
-        go("contact");
-      } else if (!d.nearMatches) go("industry");
+        go(nextMissing());
+      } else if (!d.nearMatches) go(nextNewClientStep());
       else { d.nearMatches = null; setInputOn(true); setPh("Exact name to reuse, or a new name"); }
     } else if (s === "industry" || s === "orgsize" || s === "kind" || s === "deadline") {
       const handled = await smartRoute(s, v);
@@ -246,10 +273,10 @@ export default function WizardModule({ onOpenProject }) {
     } else if (s === "pname") {
       // A whole sentence probably wraps the name ("we're calling it Falcon").
       if (aiOnRef.current && (v.split(/\s+/).length > 5 || /\?/.test(v))) { if (await smartRoute("pname", v)) return; }
-      d.name = v; go("pdesc");
+      d.name = v; go(nextMissing());
     } else if (s === "pdesc") {
       if (aiOnRef.current && /\?/.test(v)) { if (await smartRoute("pdesc", v)) return; }
-      d.desc = v.toLowerCase() === "skip" ? "" : v; go("kind");
+      d.desc = v.toLowerCase() === "skip" ? "" : v; d.descDone = true; go(nextMissing());
     } else if (s === "lldq") {
       const q = LLD_QUESTIONS[lldQ];
       // Ending in "?" reads as a question about the question — answer it and
@@ -459,7 +486,7 @@ export default function WizardModule({ onOpenProject }) {
             ? <>Next in sequence after the <b>{state.res?.clientsInRegister}</b> clients already in the register — appended there on create.</>
             : <>⚠ Could not read the register{d.registerError ? ` (${d.registerError})` : ""} — this sequence is a local guess. Verify before creating.</>}
         </div>
-        <div><Btn small onClick={() => { freeze(m.id, d.clientId); meMsg(d.clientId); go("contact"); }}>Continue</Btn></div>
+        <div><Btn small onClick={() => { freeze(m.id, d.clientId); meMsg(d.clientId); go(nextMissing()); }}>Continue</Btn></div>
       </div>
     );
   };
@@ -475,7 +502,7 @@ export default function WizardModule({ onOpenProject }) {
           <Field label="Phone"><input className="inp" value={c.phone} onChange={(e) => set("phone", e.target.value)} /></Field>
           <Field label="Email"><input className="inp" type="email" value={c.email} onChange={(e) => set("email", e.target.value)} /></Field>
         </div>
-        <div><Btn small disabled={!c.name.trim()} onClick={() => { d.contact = c; freeze(m.id, c.name); meMsg(c.name); go("pname"); }}>Continue</Btn></div>
+        <div><Btn small disabled={!c.name.trim()} onClick={() => { d.contact = c; freeze(m.id, c.name); meMsg(c.name); go(nextMissing()); }}>Continue</Btn></div>
       </div>
     );
   };
@@ -484,7 +511,7 @@ export default function WizardModule({ onOpenProject }) {
     <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
       {KINDS.map((k) => (
         <ChoiceCard key={k.k} icon={FolderOpen} title={k.label} sub={`${k.full}. Sanctioned into ${k.tool}.`}
-          onClick={() => { d.kind = k.k; freeze(m.id, k.full); meMsg(k.label); go("deadline"); }} />
+          onClick={() => { d.kind = k.k; freeze(m.id, k.full); meMsg(k.label); go(nextMissing()); }} />
       ))}
     </div>
   );
@@ -568,7 +595,8 @@ export default function WizardModule({ onOpenProject }) {
           </div>
         ))}
         {!pmOk && <div style={{ fontSize: 12, color: "var(--amber)", fontWeight: 600 }}>A PM must be assigned before continuing.</div>}
-        <div><Btn small disabled={!pmOk} onClick={() => { d.team = rows.filter((r) => r.userId); const pm = people.find((u) => u.id === (d.team.find((t) => t.slot.startsWith("Senior PM")) || d.team.find((t) => t.slot.startsWith("PM")))?.userId); freeze(m.id, `${d.team.length} allocated · owner ${pm?.name || "—"}`); meMsg(`${d.team.length} people allocated`); go("lldc"); }}>Confirm team</Btn></div>
+        {/* LLDs gate ODM only — box build & product go straight to review. */}
+        <div><Btn small disabled={!pmOk} onClick={() => { d.team = rows.filter((r) => r.userId); const pm = people.find((u) => u.id === (d.team.find((t) => t.slot.startsWith("Senior PM")) || d.team.find((t) => t.slot.startsWith("PM")))?.userId); freeze(m.id, `${d.team.length} allocated · owner ${pm?.name || "—"}`); meMsg(`${d.team.length} people allocated`); go(d.kind === "odm" ? "lldc" : "review"); }}>Confirm team</Btn></div>
       </div>
     );
   };
@@ -721,10 +749,12 @@ export default function WizardModule({ onOpenProject }) {
   };
 
   const ReviewW = ({ m }) => {
+    // The LLD hard gates apply to ODM only — box build and product ship
+    // without them (they can still be added later from the project page).
+    const needLld = d.kind === "odm";
     const gates = [
       ["Project ID", !!d.projectId],
-      ["Customer LLD", !!d.lldC],
-      ["Designer LLD", !!d.lldD],
+      ...(needLld ? [["Customer LLD", !!d.lldC], ["Designer LLD", !!d.lldD]] : []),
       ["PM assigned", d.team.some((t) => t.slot.startsWith("PM"))],
       ["Deadline set", !!d.deadline],
       ["Client & name", !!d.clientName && !!d.name],
@@ -745,6 +775,7 @@ export default function WizardModule({ onOpenProject }) {
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {gates.map(([g, ok]) => <Pill key={g} color={ok ? "var(--green)" : "var(--red)"}>{ok ? <CheckCircle2 size={11} /> : <AlertTriangle size={11} />} {g}</Pill>)}
+          {!needLld && d.kind && <Pill color="var(--txt2)">LLDs not required for {kindOf(d.kind)?.label}</Pill>}
         </div>
         <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.6 }}>
           Create will: write the client &amp; project to the shared database, sanction the project as {kindOf(d.kind)?.label || "…"} through the one-door ulm.decide(), append both **registers in Drive**, replicate the **Project-ID template folder into the Project Management area** (renamed to the Project ID), and fill the **process-map sheet** with links to every template in the library. PCB-ID folders (one per board, into PCB &amp; Firmware) are added from the project page once the board count is known.

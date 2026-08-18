@@ -342,6 +342,10 @@ function nextIds_(b) {
     out.clientId   = ids[existingIdx] || "";
     out.clientName = names[existingIdx] || "";
     out.clientSeq  = trailingSeq_(out.clientId);
+    // The codes live inside the id itself (Eb-{industry}-{size}-{seq}) — more
+    // reliable than matching the register's free-text industry column.
+    const em = String(out.clientId).match(/^Eb-([0-9A-Za-z]+)-([A-Za-z]+)-/i);
+    if (em) { out.industryCode = em[1]; out.sizeCode = em[2]; }
   } else {
     out.clientExisted = false;
     out.clientSeq = maxSeqIn_(ids) + 1;
@@ -361,8 +365,9 @@ function nextIds_(b) {
   out.lastProjectId = pIds.filter(String).slice(-1)[0] || "";
   // The client's own segment: its sequence, or the industry/size just picked.
   const cSeq = isNaN(out.clientSeq) ? null : pad2_(out.clientSeq);
-  out.projectId = (b.industryCode && b.sizeCode && cSeq)
-    ? "EbX-" + b.industryCode + "-" + b.sizeCode + "-" + cSeq + "-" + pad2_(out.projectSeq)
+  const indC = b.industryCode || out.industryCode, sizC = b.sizeCode || out.sizeCode;
+  out.projectId = (indC && sizC && cSeq)
+    ? "EbX-" + indC + "-" + sizC + "-" + cSeq + "-" + pad2_(out.projectSeq)
     : "";
   out.projectRegisterUrl = pReg.ss.getUrl();
   out.projectsInRegister = pIds.filter(String).length;

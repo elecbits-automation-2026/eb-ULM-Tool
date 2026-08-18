@@ -203,6 +203,39 @@ export async function interpretMessage({ step, question, options, date, data, me
   );
 }
 
+/* 1c. The whole-project brain dump ─────────────────────────────────────────
+   The wizard's opening message can carry everything — client, project, route,
+   deadline, contact. This pulls out every fact actually present so the wizard
+   can skip the steps that are already answered and only ask what's missing. */
+export async function extractProjectBrief({ text, industries, sizes, kinds }) {
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["clientName", "industryCode", "sizeCode", "projectName", "description", "kind", "deadline", "contactName", "contactEmail", "contactPhone", "reply"],
+    properties: {
+      clientName: { type: ["string", "null"], description: "The client / company name only — no verbs, no filler. Null if none mentioned." },
+      industryCode: { type: ["string", "null"], description: "Best-fit industry code from the list, only when the message implies it. Null when unsure." },
+      sizeCode: { type: ["string", "null"], description: "Org-size code from the list, only when implied. Null when unsure." },
+      projectName: { type: ["string", "null"], description: "What the project / product is called, cleaned. Null if not stated." },
+      description: { type: ["string", "null"], description: "One line on what is being built, in the user's own words. Null if not stated." },
+      kind: { type: ["string", "null"], enum: ["odm", "boxbuild", "product", null], description: "odm = design & engineering; boxbuild = assembly / production only; product = catalogue / stock. Null when not implied." },
+      deadline: { type: ["string", "null"], description: "The deadline as YYYY-MM-DD, resolved against today's date given in the prompt. Null if none." },
+      contactName: { type: ["string", "null"] },
+      contactEmail: { type: ["string", "null"] },
+      contactPhone: { type: ["string", "null"] },
+      reply: { type: "string", description: "One friendly sentence, max 25 words: what you captured, or what you still need." },
+    },
+  };
+  const today = new Date().toISOString().slice(0, 10);
+  return claude(
+    `Today: ${today}\n\nINDUSTRY CODES\n${industries.map((i) => `${i.code} ${i.label}`).join("\n")}\n\nORG SIZES\n${sizes.map((s) => `${s.code} ${s.label}`).join("\n")}\n\nROUTES\n${kinds.map((k) => `${k.k} = ${k.full}`).join("\n")}\n\nA user starting Elecbits' project-creation wizard wrote:\n"""${String(text || "").slice(0, 2000)}"""\n\nPull out every project-intake fact actually present. Extract ONLY what the message says or clearly implies — never invent a value to fill a field.`,
+    {
+      system: "You extract project-intake facts for Elecbits, an Indian electronics ODM. Be conservative: a null beats a guess — every field you fill is skipped in the wizard, so a wrong one costs more than a missing one.",
+      schema, maxTokens: 1200, effort: "low",
+    },
+  );
+}
+
 /* 2. Guessing the two ID codes so nobody scans 42 chips ────────────────────
    The industry and org-size codes are what the Client ID is built from, so a
    good guess up front saves the real work: the user still confirms.         */
