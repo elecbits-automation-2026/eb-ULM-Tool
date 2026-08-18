@@ -20,21 +20,40 @@ const token = String(rawToken || "").trim().replace(/^["']+|["']+$/g, "");
 
 export const driveConfigured = Boolean(url);
 
+/* Google's redirect chain occasionally rewrites a cross-origin POST into a
+   bare GET, which lands on the backend's GET handler and answers with this
+   signature instead of running the action. When that (or any transport
+   hiccup) happens, the same request is re-sent as an explicit GET with the
+   JSON in a ?body= param — a form the backend routes identically and that
+   survives every redirect hop. */
+const MISROUTED_SIGN = "POST JSON { token, action";
+
 async function call(action, params = {}) {
   if (!driveConfigured) return { ok: false, offline: true, error: "Drive backend not configured" };
+  const payload = JSON.stringify({ token, action, ...params });
+
+  let body = null;
   try {
     // text/plain avoids the CORS preflight that Apps Script web apps reject.
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ token, action, ...params }),
+      body: payload,
     });
-    const body = await res.json().catch(() => null);
-    if (!res.ok || !body) return { ok: false, error: `Drive backend HTTP ${res.status}` };
-    return body;
-  } catch (e) {
-    return { ok: false, error: e?.message || String(e) };
+    body = await res.json().catch(() => null);
+    if (body && !(body.ok === false && String(body.error || "").startsWith(MISROUTED_SIGN))) {
+      return body;
+    }
+  } catch { /* fall through to the GET form */ }
+
+  if (payload.length <= 6000) {
+    try {
+      const res = await fetch(url + (url.includes("?") ? "&" : "?") + "body=" + encodeURIComponent(payload));
+      const viaGet = await res.json().catch(() => null);
+      if (viaGet) return viaGet;
+    } catch { /* keep whatever the POST produced */ }
   }
+  return body || { ok: false, error: "Drive backend unreachable" };
 }
 
 export const drivePing = () => call("ping");

@@ -166,10 +166,20 @@ function doPost(e) {
   return handle_(body);
 }
 
-// GET supports the two read-only checks, so a browser hit can verify the
-// wiring without the portal: ?action=ping&token=… / ?action=registry.check&token=…
+// GET carries the full contract too: ?body=<url-encoded JSON of the same POST
+// body>. Google's redirect chain occasionally rewrites a cross-origin POST
+// into a bare GET (dropping the body) — the portal detects that and re-sends
+// in this form, which survives every hop. Bare ?action=ping&token=… still
+// works for a quick browser check.
 function doGet(e) {
   const p = (e && e.parameter) || {};
+  if (p.body) {
+    let body;
+    try { body = JSON.parse(p.body); }
+    catch (err) { return json_({ ok: false, error: "Bad JSON in the body param" }); }
+    return handle_(body);
+  }
+  // Bare params stay read-only — writes must come with a full body.
   if (p.action === "ping" || p.action === "registry.check") {
     return handle_({ token: p.token, action: p.action });
   }

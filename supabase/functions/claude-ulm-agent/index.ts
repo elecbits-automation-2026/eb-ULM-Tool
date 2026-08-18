@@ -64,15 +64,23 @@ async function runTool(name: string, input: unknown): Promise<unknown> {
   const url = (Deno.env.get("ULM_DRIVE_URL") || "").trim();
   const token = (Deno.env.get("ULM_DRIVE_TOKEN") || "").trim();
   if (!url || !token) return { error: "ULM_DRIVE_URL / ULM_DRIVE_TOKEN secrets are not set on this function" };
+  const payload = JSON.stringify({ token, action: "tool.run", name, input });
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ token, action: "tool.run", name, input }),
+      body: payload,
       redirect: "follow",
     });
-    const body = await res.json().catch(() => null);
-    if (!body) return { error: `Drive backend answered HTTP ${res.status} without JSON` };
+    let body = await res.json().catch(() => null);
+    // Google's redirect chain can rewrite the POST into a bare GET (the
+    // backend then answers with its GET-handler signature) — re-send as an
+    // explicit GET with the JSON in ?body=, which survives every hop.
+    if (!body || (body.ok === false && String(body.error || "").startsWith("POST JSON { token, action"))) {
+      const res2 = await fetch(url + (url.includes("?") ? "&" : "?") + "body=" + encodeURIComponent(payload));
+      body = await res2.json().catch(() => null);
+      if (!body) return { error: `Drive backend answered HTTP ${res2.status} without JSON` };
+    }
     if (!body.ok) return { error: body.error || "Drive tool failed" };
     return body.result;
   } catch (e) {

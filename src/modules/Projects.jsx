@@ -8,7 +8,7 @@ import { Layers, Search, FolderOpen, Link2, ExternalLink, GitBranch, Users, Shie
 import { useUlm } from "../data.jsx";
 import { Pill, Btn, AvatarDot, Field, Seg, Modal, Empty, SectionTitle, Section, KV, chipS, fmtDate, fmtDateTime, daysLeft } from "../ui.jsx";
 import { MONO, KINDS, kindOf, SANCTION_STATES, DECIDE_ACTIONS, TEAM_SLOTS, STATUSES } from "../constants.js";
-import { driveConfigured, driveRegisterProject, driveProvisionProject, driveProvisionPcb } from "../lib/ulmDrive.js";
+import { driveConfigured, driveRegisterClient, driveRegisterProject, driveProvisionProject, driveProvisionPcb } from "../lib/ulmDrive.js";
 import { Cpu, Plus } from "lucide-react";
 
 function DecidePanel({ p, onDone }) {
@@ -91,7 +91,7 @@ function TeamEditor({ p, onClose }) {
 }
 
 export function ProvisioningCard({ p }) {
-  const { provisioning, saveProvisioning, isAdmin, toast, people, me } = useUlm();
+  const { provisioning, saveProvisioning, isAdmin, toast, people, me, orgs } = useUlm();
   const prov = provisioning.find((x) => x.projectId === p.id);
   const [busy, setBusy] = useState(false);
 
@@ -101,6 +101,21 @@ export function ProvisioningCard({ p }) {
     try {
       // Idempotent server-side: a retry re-uses the register row rather than
       // appending a duplicate, and resumes a half-finished folder copy.
+      // The client row first — a run that died before it leaves the client
+      // register without this client; codes come out of the id itself.
+      if (p.clientId) {
+        const org = orgs.find((o) => o.clientId === p.clientId);
+        const idm = String(p.clientId).match(/^Eb-([0-9A-Za-z]+)-([A-Za-z]+)-/i);
+        const rc = await driveRegisterClient({
+          clientId: p.clientId, name: p.clientName || org?.name || "",
+          industry: org?.industry || p.industry || "", industryCode: idm?.[1] || "",
+          orgSize: org?.orgSize || p.orgSize || "", sizeCode: idm?.[2] || "",
+          contact: p.contact?.name || org?.contacts?.[0]?.name || "", designation: p.contact?.designation || "",
+          email: p.contact?.email || "", phone: p.contact?.phone || "",
+          by: people.find((x) => x.id === me)?.name || "",
+        });
+        if (rc.ok) next.clientRegisterUrl = rc.registerUrl; else throw new Error(rc.error);
+      }
       const rp = await driveRegisterProject({ projectId: p.projectId, name: p.name, clientId: p.clientId, clientName: p.clientName, contact: p.contact?.name, kind: kindOf(p.kind)?.label || p.kind, desc: p.desc, status: p.status, deadline: p.deadline, by: people.find((x) => x.id === me)?.name || "" });
       if (rp.ok) next.projectRegisterUrl = rp.registerUrl; else throw new Error(rp.error);
 
