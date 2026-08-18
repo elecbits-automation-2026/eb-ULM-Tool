@@ -38,9 +38,9 @@
  *
  * ── Deploy ────────────────────────────────────────────────────────────────
  * 1. script.google.com → New project → paste this file.
- * 2. Set SHARED_TOKEN. The five folder IDs below are already the live
- *    Elecbits ones; the three register ids are blank on purpose — read the
- *    note on AUTO_CONVERT_REGISTERS before filling them in.
+ * 2. ⚙ Project Settings → Script properties → add SHARED_TOKEN (a long
+ *    random string; same value as VITE_ULM_DRIVE_TOKEN in the portal env).
+ *    Set once — future pastes of this file need no edits at all.
  * 3. Deploy → New deployment → Web app:
  *      Execute as: **Me**   ·   Who has access: **Anyone**
  *    ("Anyone" is required for the portal to reach it; SHARED_TOKEN is the
@@ -54,7 +54,12 @@
  */
 
 const CONFIG = {
-  // Long random string; must equal VITE_ULM_DRIVE_TOKEN in the portal env.
+  // The web app's access token; must equal VITE_ULM_DRIVE_TOKEN in the portal
+  // env. DON'T edit this line — put the real value in Script Properties
+  // instead (⚙ Project Settings → Script properties → SHARED_TOKEN), the same
+  // place ANTHROPIC_API_KEY lives. Properties survive every code paste, so
+  // the file from the repo works untouched. This constant is only a fallback
+  // and must never hold a real token in a public repo.
   SHARED_TOKEN: "REPLACE-WITH-A-LONG-RANDOM-STRING",
 
   // ── The three registers ──────────────────────────────────────────────────
@@ -186,10 +191,24 @@ function doGet(e) {
   return json_({ ok: false, error: "POST JSON { token, action, ... }" });
 }
 
+/** The real token: Script Properties first (survives every code paste), the
+    CONFIG constant as fallback. The placeholder never authenticates. */
+function sharedToken_() {
+  let t = "";
+  try { t = String(PropertiesService.getScriptProperties().getProperty("SHARED_TOKEN") || "").trim(); }
+  catch (e) { /* fall through */ }
+  if (!t) t = String(CONFIG.SHARED_TOKEN || "").trim();
+  return t.indexOf("REPLACE") === 0 ? "" : t;
+}
+
 function handle_(body) {
   DEADLINE = Date.now() + TIME_BUDGET_MS;
   try {
-    if (!CONFIG.SHARED_TOKEN || body.token !== CONFIG.SHARED_TOKEN) {
+    const tok = sharedToken_();
+    if (!tok) {
+      return json_({ ok: false, error: "No token configured — add SHARED_TOKEN in ⚙ Project Settings → Script properties" });
+    }
+    if (body.token !== tok) {
       return json_({ ok: false, error: "Bad or missing token" });
     }
     switch (body.action) {
