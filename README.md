@@ -241,6 +241,7 @@ src/
 supabase/
   10-ulm-tool.sql    the portal's migration — run after the ODM schema files
   11-registers.sql   the register mirror (CPTS + Client ID sheet → ulm.registers)
+  12-chat.sql        date-wise Assistant chat storage (ulm.chat_messages)
 google-apps-script/
   ulm-drive.gs       the Drive backend web app
 legacy/              the earlier static dashboards this repo used to hold
