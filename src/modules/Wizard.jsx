@@ -235,7 +235,16 @@ export default function WizardModule({ onOpenProject }) {
             return;
           }
           name = String(r.clientName).trim();
-        } catch { setTyping(false); /* treat the raw text as the name */ }
+        } catch {
+          setTyping(false);
+          // Claude unreachable: a short plain name can pass through literally,
+          // but a sentence must never be baptised as a company.
+          if (looksLikeChatter(v) || v.split(/\s+/).length > 4) {
+            await sys("I couldn't parse that just now — give me **just the company name**, please.");
+            setInputOn(true); setPh("e.g. Acme Devices");
+            return;
+          }
+        }
       }
       d.clientName = name;
       // The register in Drive is the client list of record — search it, then
