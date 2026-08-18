@@ -1059,11 +1059,16 @@ function listRegistry_(b) {
                 : b.register === "pcbs"    ? PCB_HEADERS
                 : PROJECT_HEADERS;
   const reg = register_(which, title, headers);
-  const last = reg.sheet.getLastRow();
-  const rows = last > 1
-    ? reg.sheet.getRange(2, 1, last - 1, headers.length).getValues()
+  // The sheet's OWN header row and columns, values formatted as displayed —
+  // this is a mirror of the master, not a projection onto this tool's fields.
+  const head = headerRowOf_(reg.sheet, headers);
+  const lastRow = reg.sheet.getLastRow();
+  const lastCol = Math.min(Math.max(reg.sheet.getLastColumn(), 1), 26);
+  const hvals = reg.sheet.getRange(head.row, 1, 1, lastCol).getDisplayValues()[0];
+  const rows = lastRow > head.row
+    ? reg.sheet.getRange(head.row + 1, 1, lastRow - head.row, lastCol).getDisplayValues()
     : [];
-  return { ok: true, headers: headers, rows: rows, registerUrl: reg.ss.getUrl() };
+  return { ok: true, headers: hvals, rows: rows, headerRow: head.row, registerUrl: reg.ss.getUrl() };
 }
 
 /* ── project provisioning — the PM tree ───────────────────────────────────── */

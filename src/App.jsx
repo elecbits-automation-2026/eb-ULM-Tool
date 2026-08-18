@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Inbox, FolderPlus, Layers, Users, Building2, PlugZap, Shield, Sun, Moon,
-  Loader2, ArrowRight, LogOut, RefreshCw, CheckCircle2, AlertTriangle, Sparkles,
+  Loader2, ArrowRight, LogOut, RefreshCw, CheckCircle2, AlertTriangle, Sparkles, FileSpreadsheet,
 } from "lucide-react";
 import elecbitsLogo from "./assets/elecbits-logo.jpg";
 import { supabaseConfigured, supabaseEnabled, supabaseInitError, supabaseUrl } from "./lib/supabase.js";
@@ -29,6 +29,7 @@ import AllocationModule from "./modules/Allocation.jsx";
 import ClientsModule from "./modules/Clients.jsx";
 import IntegrationsModule from "./modules/Integrations.jsx";
 import AssistantModule from "./modules/Assistant.jsx";
+import RegistersModule from "./modules/Registers.jsx";
 
 const NAV_GROUPS = [
   ["ULM", [
@@ -42,6 +43,7 @@ const NAV_GROUPS = [
   ]],
   ["Registry", [
     { id: "clients", label: "Clients", icon: Building2 },
+    { id: "registers", label: "Registers", icon: FileSpreadsheet },
   ]],
   ["System", [
     { id: "integrations", label: "Integrations", icon: PlugZap, admin: true },
@@ -57,6 +59,7 @@ const TITLES = {
   clients: ["Clients", "The shared client table and the Drive-side register"],
   integrations: ["Integrations", "Supabase · Drive · AI — every seam, visible"],
   assistant: ["Assistant", "Claude with Drive hands — search, read, draft docs"],
+  registers: ["Registers", "The Drive masters mirrored in the database — CPTS & Client IDs"],
 };
 
 const Shell = ({ dark, children }) => (
@@ -299,6 +302,7 @@ function AppBody({ dark, setDark, session }) {
           {view === "clients" && <ClientsModule />}
           {view === "integrations" && <IntegrationsModule />}
           {view === "assistant" && <AssistantModule />}
+          {view === "registers" && <RegistersModule />}
         </div>
       </main>
 

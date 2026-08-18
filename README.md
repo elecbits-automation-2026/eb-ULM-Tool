@@ -231,7 +231,7 @@ src/
   data.jsx           data layer: Supabase (rpc wrappers) ⇄ seeded demo mode
   ui.jsx             the design system (verbatim from the ODM app)
   constants.js       theme, ID code tables, slots, kinds, LLD questionnaire
-  modules/           Inbox · Wizard · Projects · Allocation · Clients · Assistant · Integrations
+  modules/           Inbox · Wizard · Projects · Allocation · Clients · Registers · Assistant · Integrations
   lib/
     supabase.js      client init (same robust env handling as the ODM app)
     tables.js        logical-name → schema.table map (+ ulm.* additions)
@@ -240,6 +240,7 @@ src/
     ai.js            the Claude seam
 supabase/
   10-ulm-tool.sql    the portal's migration — run after the ODM schema files
+  11-registers.sql   the register mirror (CPTS + Client ID sheet → ulm.registers)
 google-apps-script/
   ulm-drive.gs       the Drive backend web app
 legacy/              the earlier static dashboards this repo used to hold
