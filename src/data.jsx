@@ -91,7 +91,8 @@ const normProject = (r) => ({
   industry: r.industry || "", orgSize: r.org_size || "", contact: r.contact || {},
   deadline: r.deadline || "", startDate: r.start_date || "", status: r.status || "Planning",
   team: Array.isArray(r.team) ? r.team : [],
-  kind: r.kind || null, sanctionState: r.sanction_state || "draft",
+  kind: r.kind || null, kindV2: r.kind_v2 || "", sourceDealId: r.source_deal_id || "",
+  sanctionState: r.sanction_state || "draft",
   isSanctioned: !!r.is_sanctioned, sanctionedAt: r.sanctioned_at, sanctionedBy: r.sanctioned_by,
   sanctionReason: r.sanction_reason || "", requestedAt: r.requested_at, requestedBy: r.requested_by,
   orgId: r.org_id || null, parentId: r.parent_id || null,
@@ -213,10 +214,13 @@ export function UlmProvider({ session, children }) {
 
   /* ── rpc helper ──────────────────────────────────────────────────────── */
   const rpc = useCallback(async (fn, params) => {
+    // Demo mode has no database: say so plainly rather than resolving with
+    // nothing and letting the UI report a write that never happened.
+    if (!live) throw new Error("Not available in demo mode — this writes to the shared database.");
     const { data: out, error } = await supabase.schema("ulm").rpc(fn, params);
     if (error) throw new Error(error.message);
     return out;
-  }, []);
+  }, [live]);
 
   /* ── the demo decide() state machine (mirror of ulm.decide) ──────────── */
   const demoDecide = (project, action, kind, reason, by) => {
@@ -334,12 +338,17 @@ export function UlmProvider({ session, children }) {
   /* ── SOP v2.0 flows ────────────────────────────────────────────────────
      The register (Google Sheet) owns identity; these record the workflow.
      Every one is role-gated server-side — the browser only asks.          */
+  const ALL_V2_ROLES = ["registrar", "pm", "pm_head", "scs", "solution_architect", "deal_owner"];
+  /* ulm.has_role() ORs public.is_admin(), so a superadmin really does hold
+     every role server-side — the UI must not tell them otherwise. Returns
+     null (not []) when the roles cannot be read, so callers can say "unknown"
+     instead of asserting the user holds nothing. */
   const v2Roles = useCallback(async () => {
-    if (!live) return ["registrar", "pm", "pm_head", "scs", "solution_architect", "deal_owner"];
+    if (!live || isAdmin) return ALL_V2_ROLES;
     const { data, error } = await supabase.schema("ulm").from("roles").select("role").eq("person_id", me);
-    if (error) return [];
+    if (error) return null;
     return (data || []).map((r) => r.role);
-  }, [live, me]);
+  }, [live, isAdmin, me]);
 
   const v2Deals = useCallback(async () => {
     if (!live) return [];
@@ -355,8 +364,8 @@ export function UlmProvider({ session, children }) {
     return data || [];
   }, [live]);
 
-  const v2ConfirmGate = useCallback(async (dealId, condition, evidence, note) =>
-    rpc("portal_confirm_gate", { p_deal: dealId, p_condition: condition, p_evidence: evidence || "", p_note: note || null }), [rpc]);
+  const v2ConfirmGate = useCallback(async (dealId, condition, evidence, note, pathB) =>
+    rpc("portal_confirm_gate", { p_deal: dealId, p_condition: condition, p_evidence: evidence || "", p_note: note || null, p_path_b: !!pathB }), [rpc]);
 
   const v2TriageRequest = useCallback(async (p) =>
     rpc("portal_triage_request", { p_request: p.requestId, p_client_id: p.clientId, p_deal_id: p.dealId, p_org: p.orgId || null, p_overtake: p.overtake || "pending", p_note: p.note || null }), [rpc]);

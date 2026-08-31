@@ -6,8 +6,7 @@
    Drive web-app transport (v1 behaviour) so a half-migrated deployment still
    works, and `v2Secure` says which mode is live.                             */
 
-import { supabaseAnonKey } from "./supabase.js";
-import { driveConfigured } from "./ulmDrive.js";
+import { supabase, supabaseAnonKey } from "./supabase.js";
 
 const clean = (s) => String(s || "").trim().replace(/^["']+|["']+$/g, "");
 const proxyUrl = clean(import.meta.env.VITE_ULM_PROXY_URL);
@@ -20,11 +19,18 @@ export const v2Configured = Boolean(proxyUrl || rawUrl);
 const MISROUTED = "POST JSON { token, action";
 
 async function callProxy(action, params) {
+  // The proxy checks ulm.has_role AS THE CALLER, so it needs the signed-in
+  // user's access token — the anon key would resolve auth.uid() to NULL and
+  // every registrar action would come back 403.
+  let jwt = "";
+  try { jwt = (await supabase?.auth?.getSession())?.data?.session?.access_token || ""; }
+  catch { /* unauthenticated — the proxy will say so */ }
   const res = await fetch(proxyUrl, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(supabaseAnonKey ? { authorization: `Bearer ${supabaseAnonKey}`, apikey: supabaseAnonKey } : {}),
+      ...(supabaseAnonKey ? { apikey: supabaseAnonKey } : {}),
+      ...(jwt || supabaseAnonKey ? { authorization: `Bearer ${jwt || supabaseAnonKey}` } : {}),
     },
     body: JSON.stringify({ action, ...params }),
   });

@@ -122,8 +122,12 @@ do $$ begin
 end $$;
 grant select on ulm.sanction_gates to authenticated;
 
+-- p_path_b marks conditions 2 and 3 as the client design-pack attestation
+-- rather than the two locked LLDs. It is a real column, not a note: the
+-- conversion refuses a Path B project whose gate does not carry it.
 create or replace function ulm.portal_confirm_gate(
-  p_deal text, p_condition int, p_evidence text, p_note text default null
+  p_deal text, p_condition int, p_evidence text, p_note text default null,
+  p_path_b boolean default false
 ) returns void
 language plpgsql security definer set search_path = ulm, core, public as $$
 declare
@@ -131,12 +135,14 @@ declare
     when 0 then 'deal_owner' when 1 then 'scs' when 2 then 'pm'
     when 3 then 'solution_architect' when 4 then 'pm_head' when 5 then 'registrar' end;
   v_by uuid;
+  v_path_b boolean := coalesce(p_path_b, false) and p_condition in (2, 3);
 begin
   v_by := ulm.require_role(v_role);
-  insert into ulm.sanction_gates as g (deal_id, condition_no, evidence_url, confirmed_by, confirmed_role, confirmed_at, note)
-  values (p_deal, p_condition, coalesce(p_evidence,''), v_by, v_role, now(), p_note)
+  insert into ulm.sanction_gates as g (deal_id, condition_no, path_b, evidence_url, confirmed_by, confirmed_role, confirmed_at, note)
+  values (p_deal, p_condition, v_path_b, coalesce(p_evidence,''), v_by, v_role, now(), p_note)
   on conflict (deal_id, condition_no) do update
-    set evidence_url = excluded.evidence_url, confirmed_by = excluded.confirmed_by,
+    set path_b = excluded.path_b, evidence_url = excluded.evidence_url,
+        confirmed_by = excluded.confirmed_by,
         confirmed_role = excluded.confirmed_role, confirmed_at = now(), note = excluded.note;
 end $$;
 
@@ -193,11 +199,14 @@ alter table core.orgs     add column if not exists eb_client_id text;
 comment on function ulm.portal_accept_request is
   'v1 path — accept creates a project directly. Deprecated under SOP v2.0: use portal_triage_request (P1) + portal_convert_deal; sanction happens only at conversion.';
 
+-- The pre-p_path_b signature would otherwise linger and be picked by callers.
+drop function if exists ulm.portal_confirm_gate(text, int, text, text);
+
 revoke all on function ulm.has_role(text) from public;
 revoke all on function ulm.require_role(text) from public;
-revoke all on function ulm.portal_confirm_gate(text, int, text, text) from public;
+revoke all on function ulm.portal_confirm_gate(text, int, text, text, boolean) from public;
 revoke all on function ulm.portal_grant_role(uuid, text) from public;
 revoke all on function ulm.record_id_provisioning(text, text, text, text, text, text, text) from public;
 grant execute on function ulm.has_role(text), ulm.require_role(text),
-  ulm.portal_confirm_gate(text, int, text, text), ulm.portal_grant_role(uuid, text),
+  ulm.portal_confirm_gate(text, int, text, text, boolean), ulm.portal_grant_role(uuid, text),
   ulm.record_id_provisioning(text, text, text, text, text, text, text) to authenticated;
