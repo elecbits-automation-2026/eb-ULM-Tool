@@ -233,6 +233,14 @@ function handle_(body) {
       case "v2.validate":       return json_(v2Validate_());
       case "v2.allocate":       return json_(v2Allocate_(body));
       case "v2.list":           return json_(v2List_(body));
+      case "v2.update":         return json_(v2Update_(body));
+      case "v2.convert":        return json_(v2Convert_(body));
+      case "v2.provision.project": return json_(v2ProvisionProject_(body));
+      case "v2.provision.eng":  return json_(v2ProvisionEng_(body));
+      case "v2.provision.run":  return json_(v2ProvisionRun_(body));
+      case "v2.master":         return json_(v2Master_(body));
+      case "v2.governance":     return json_(v2Governance_(body));
+      case "v2.health":         return json_(v2Health_());
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -1736,4 +1744,306 @@ function v2List_(b) {
   const lastRow = reg.sheet.getLastRow(), lastCol = Math.min(reg.sheet.getLastColumn(), 20);
   const rows = lastRow > head ? reg.sheet.getRange(head + 1, 1, lastRow - head, lastCol).getDisplayValues() : [];
   return { ok: true, headers: reg.sheet.getRange(head, 1, 1, lastCol).getDisplayValues()[0], rows: rows, registerUrl: reg.ss.getUrl() };
+}
+
+
+/* ═══ v2 OPERATIONS — conversion, provisioning, master, governance ══════════
+   The doing half of the registrar engine. Folder anchors are pinned like the
+   register: Script property V2_<KEY> wins over the constant, so pasting new
+   code never loses the pins.
+     V2_PROJECTS_PARENT    Eb-17-Projects
+     V2_PROJECT_BLUEPRINT  01-Project-ID-Folder-PM (master, eb-templates)
+     V2_PCB_CONTAINER / V2_PCB_TEMPLATE     PCB - Engineers / Developers
+     V2_FW_CONTAINER  / V2_FW_TEMPLATE      Firmware-Engineers/ Developer
+     V2_ED_CONTAINER  / V2_ED_TEMPLATE      Enclosure-Engineers/ Developer   */
+
+const V2_ANCHOR_DEFAULTS = {
+  PROJECTS_PARENT: "", PROJECT_BLUEPRINT: "",
+  PCB_CONTAINER: "", PCB_TEMPLATE: "",
+  FW_CONTAINER: "", FW_TEMPLATE: "",
+  ED_CONTAINER: "", ED_TEMPLATE: "",
+};
+function v2Anchor_(key) {
+  let v = "";
+  try { v = String(PropertiesService.getScriptProperties().getProperty("V2_" + key) || "").trim(); }
+  catch (e) { /* fall through */ }
+  return v || String(V2_ANCHOR_DEFAULTS[key] || "").trim();
+}
+function v2AnchorFolder_(key, what) {
+  const id = v2Anchor_(key);
+  if (!id) throw new Error("Anchor V2_" + key + " is not pinned (" + what + ") — add it in Script properties.");
+  return DriveApp.getFolderById(id);
+}
+const v2DriveId_ = (url) => {
+  const m = String(url || "").match(/[-\w]{25,}/);
+  return m ? m[0] : "";
+};
+
+/** Find a row by id in a v2 tab. Returns { sheet, head, row, values } or null. */
+function v2FindRow_(tabName, id) {
+  const reg = v2Sheet_(tabName);
+  const head = v2HeaderRow_(reg.sheet, tabName);
+  const last = reg.sheet.getLastRow();
+  if (last <= head) return null;
+  const ids = reg.sheet.getRange(head + 1, 1, last - head, 1).getValues();
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0]).trim().toUpperCase() === String(id).trim().toUpperCase()) {
+      const row = head + 1 + i;
+      const width = V2_COLUMNS[tabName].length;
+      return { reg: reg, head: head, row: row,
+               values: reg.sheet.getRange(row, 1, 1, width).getDisplayValues()[0] };
+    }
+  }
+  return null;
+}
+const v2Col_ = (tabName, colName) => {
+  const i = V2_COLUMNS[tabName].indexOf(colName);
+  if (i < 0) throw new Error(tabName + " has no column '" + colName + "'");
+  return i + 1;
+};
+
+/* ── v2.update — fix named columns of one row; ID columns are untouchable ── */
+function v2Update_(b) {
+  const tabName = V2_COLUMNS[b.tab] ? b.tab : null;
+  if (!tabName) return { ok: false, error: "tab must be one of: " + Object.keys(V2_COLUMNS).join(", ") };
+  const hit = v2FindRow_(tabName, b.id);
+  if (!hit) return { ok: false, error: String(b.id) + " is not in '" + tabName + "'" };
+  const values = b.values || {};
+  const changed = [], refused = [];
+  Object.keys(values).forEach(function (c) {
+    if (values[c] === undefined || values[c] === null) return;
+    if (V2_COLUMNS[tabName].indexOf(c) < 0) { refused.push(c + " (no such column)"); return; }
+    // Law 1: identifiers are permanent — every *ID column is read-only here.
+    if (/\bID\b/i.test(c) && c !== "Legacy ID" && c !== "Legacy SKU Code" && c !== "Linked PCB Input ID") {
+      refused.push(c + " (identifier columns never change)"); return;
+    }
+    hit.reg.sheet.getRange(hit.row, v2Col_(tabName, c)).setValue(values[c]);
+    changed.push(c);
+  });
+  return { ok: true, row: hit.row, changed: changed, refused: refused, registerUrl: hit.reg.ss.getUrl() };
+}
+
+/* ── v2.convert — the atomic sitting (Law 10, rule 0.2) ────────────────────
+   { dealId, fields: { "Project Name", "Kind", "Project Manager" }, by }
+   Gate checks live OUTSIDE (Supabase, role-gated; the ulm-proxy enforces
+   them before this action). Here: assert deal Won, mint EB-P, append the
+   Projects row, write Converted to Project ID — idempotent-resumable: an
+   existing Projects row with this Source Deal ID completes the missing end
+   instead of re-minting.                                                    */
+function v2Convert_(b) {
+  const dealId = String(b.dealId || "").trim().toUpperCase();
+  if (!V2_TABS.DEAL.regex.test(dealId)) return { ok: false, error: "dealId must be a valid EB-C-YY-nnnn-Dss" };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const deal = v2FindRow_("Deals", dealId);
+    if (!deal) return { ok: false, error: dealId + " has no row in Deals (Law 6)" };
+    const status = deal.values[v2Col_("Deals", "Status") - 1];
+    if (String(status).trim() !== "Won") return { ok: false, error: "Rule 0.2: only a WON deal converts — this one is '" + status + "'" };
+    const clientId = String(deal.values[v2Col_("Deals", "Client ID") - 1]).trim();
+
+    // Resume: an existing project for this deal? Complete the link instead.
+    const preg = v2Sheet_("Projects");
+    const phead = v2HeaderRow_(preg.sheet, "Projects");
+    const plast = preg.sheet.getLastRow();
+    let projectId = "", prow = 0;
+    if (plast > phead) {
+      const width = V2_COLUMNS.Projects.length;
+      const rows = preg.sheet.getRange(phead + 1, 1, plast - phead, width).getDisplayValues();
+      for (let i = 0; i < rows.length; i++) {
+        if (String(rows[i][v2Col_("Projects", "Source Deal ID") - 1]).trim().toUpperCase() === dealId) {
+          projectId = String(rows[i][0]).trim(); prow = phead + 1 + i; break;
+        }
+      }
+    }
+    const already = deal.values[v2Col_("Deals", "Converted to Project ID") - 1];
+    if (String(already).trim() && !projectId) projectId = String(already).trim();
+
+    if (!projectId) {
+      // Mint EB-P here — the ONE lawful door (generic allocator refuses P).
+      const ids = v2Ids_(preg.sheet, "Projects");
+      if (ids.rows.some(function (r) { return r.example; })) return { ok: false, error: "Blue example rows still in Projects — delete them first (v2.validate)." };
+      const yy = v2Yy_();
+      const stem = "EB-P-" + yy + "-";
+      const valid = ids.rows.map(function (r) { return r.id; }).filter(function (id) { return V2_TABS.P.regex.test(id) && id.indexOf(stem) === 0; });
+      const n = Math.max.apply(null, [0].concat(valid.map(function (id) { return parseInt(id.slice(-4), 10); })));
+      projectId = stem + pad_(n + 1, 4);
+      const f = b.fields || {};
+      preg.sheet.appendRow(V2_COLUMNS.Projects.map(function (c) {
+        if (c === "Project ID") return projectId;
+        if (c === "Source Deal ID") return dealId;
+        if (c === "Client ID") return clientId;
+        if (c === "Status") return "Active";
+        if (c === "Start Date") return v2Today_();
+        if (c === "Date Added") return v2Today_();
+        if (c === "Added By") return String(b.by || "");
+        return f[c] != null ? f[c] : "";
+      }));
+      prow = preg.sheet.getLastRow();
+    }
+
+    // Both ends of the link, same sitting (rule 0.2 / SOP §3.2).
+    deal.reg.sheet.getRange(deal.row, v2Col_("Deals", "Converted to Project ID")).setValue(projectId);
+    const dcCol = v2Col_("Deals", "Date Closed");
+    if (!String(deal.values[dcCol - 1]).trim()) deal.reg.sheet.getRange(deal.row, dcCol).setValue(v2Today_());
+
+    return { ok: true, projectId: projectId, dealId: dealId, clientId: clientId, projectRow: prow, registerUrl: preg.ss.getUrl() };
+  } finally { lock.releaseLock(); }
+}
+
+/* ── v2 provisioning — register row FIRST, folder second, link third ─────── */
+
+function v2CopyTo_(templateKey, parentKey, name) {
+  const template = v2AnchorFolder_(templateKey, "blueprint");
+  const parent = v2AnchorFolder_(parentKey, "container");
+  let dst = folderByName_(parent, name);
+  if (!dst) dst = parent.createFolder(name);
+  if ((dst.getDescription() || "").indexOf(DONE_MARK) >= 0) {
+    return { folder: dst, done: true, copied: 0, folders: 0, already: true };
+  }
+  const count = { copied: 0, folders: 0, skipped: 0 };
+  const finished = copyTree_(template, dst, count);
+  if (finished) dst.setDescription(DONE_MARK + " " + new Date().toISOString());
+  return { folder: dst, done: finished, copied: count.copied, folders: count.folders };
+}
+
+/** { projectId, lldUrls?: [customer, designer], by } — blueprint copy into
+    Eb-17-Projects, link back, LLD PDFs copied into 03-LLD-HLD, governance
+    doc seeded. done:false = call again (same resume protocol as v1). */
+function v2ProvisionProject_(b) {
+  const projectId = String(b.projectId || "").trim().toUpperCase();
+  const hit = v2FindRow_("Projects", projectId);
+  if (!hit) return { ok: false, error: projectId + " has no Projects row — no register row, no folder (Law 6)" };
+  const res = v2CopyTo_("PROJECT_BLUEPRINT", "PROJECTS_PARENT", projectId);
+  const out = { ok: true, projectId: projectId, folderId: res.folder.getId(), folderUrl: res.folder.getUrl(),
+                copied: res.copied, folders: res.folders, done: res.done };
+  if (!res.done) return out;                      // caller loops
+  hit.reg.sheet.getRange(hit.row, v2Col_("Projects", "Drive Folder Link")).setValue(res.folder.getUrl());
+
+  // Gate evidence into the tree: locked LLD PDFs → 02-…R&D-PM / 03-LLD-HLD.
+  out.lldCopied = 0;
+  (b.lldUrls || []).forEach(function (u) {
+    try {
+      const fid = v2DriveId_(u);
+      if (!fid) return;
+      const rnd = v2SubByPattern_(res.folder, /R&D/i);
+      const lld = rnd ? v2SubByPattern_(rnd, /LLD/i) : null;
+      if (lld) { DriveApp.getFileById(fid).makeCopy(DriveApp.getFileById(fid).getName(), lld); out.lldCopied++; }
+    } catch (e) { /* evidence stays linked in the gate record */ }
+  });
+  out.governance = v2Governance_({ projectId: projectId, line: "Project opened from " +
+    String(hit.values[v2Col_("Projects", "Source Deal ID") - 1] || "?") + ". Six gate conditions verified in the portal.", by: b.by }).docUrl || "";
+  return out;
+}
+function v2SubByPattern_(folder, re) {
+  const it = folder.getFolders();
+  while (it.hasNext()) { const f = it.next(); if (re.test(f.getName())) return f; }
+  return null;
+}
+
+/** { family: PCB|FW|ED, id } — engineering container copy + link back. */
+function v2ProvisionEng_(b) {
+  const fam = String(b.family || "").toUpperCase();
+  const map = { PCB: ["PCB_TEMPLATE", "PCB_CONTAINER", "PCB"], FW: ["FW_TEMPLATE", "FW_CONTAINER", "FW"], ED: ["ED_TEMPLATE", "ED_CONTAINER", "Enclosure"] };
+  if (!map[fam]) return { ok: false, error: "family must be PCB, FW or ED" };
+  const id = String(b.id || "").trim().toUpperCase();
+  const hit = v2FindRow_(map[fam][2], id);
+  if (!hit) return { ok: false, error: id + " has no register row (Law 6)" };
+  const res = v2CopyTo_(map[fam][0], map[fam][1], id);
+  const out = { ok: true, id: id, folderId: res.folder.getId(), folderUrl: res.folder.getUrl(), copied: res.copied, folders: res.folders, done: res.done };
+  if (!res.done) return out;
+  hit.reg.sheet.getRange(hit.row, v2Col_(map[fam][2], "Drive Folder Link")).setValue(res.folder.getUrl());
+  return out;
+}
+
+/** { mfgId } — run folder under <project>/03-…SCS/06-Production, one
+    sub-folder per board from the MFG row, link back. */
+function v2ProvisionRun_(b) {
+  const mfgId = String(b.mfgId || "").trim().toUpperCase();
+  if (!V2_TABS.MFG.regex.test(mfgId)) return { ok: false, error: "mfgId must be EB-P-YY-nnnn-MFG-nnn-qty" };
+  const hit = v2FindRow_("MFG", mfgId);
+  if (!hit) return { ok: false, error: mfgId + " has no MFG row (Law 6)" };
+  const projectId = mfgId.replace(/-MFG-\d{3}-\d+$/, "");
+  const proj = v2FindRow_("Projects", projectId);
+  if (!proj) return { ok: false, error: projectId + " has no Projects row" };
+  const pfid = v2DriveId_(proj.values[v2Col_("Projects", "Drive Folder Link") - 1]);
+  if (!pfid) return { ok: false, error: projectId + " has no Drive Folder Link yet — provision the project first" };
+  const pfolder = DriveApp.getFolderById(pfid);
+  const scs = v2SubByPattern_(pfolder, /SCS/i);
+  const prod = scs ? (v2SubByPattern_(scs, /Production/i) || scs.createFolder("06-Production")) : null;
+  if (!prod) return { ok: false, error: "Could not find the 03-…SCS branch inside " + projectId };
+  let run = folderByName_(prod, mfgId);
+  if (!run) run = prod.createFolder(mfgId);
+  const boards = String(hit.values[v2Col_("MFG", "Boards in this run") - 1] || "").split(",").map(function (s) { return s.trim(); }).filter(String);
+  boards.forEach(function (bid) { if (!folderByName_(run, bid)) run.createFolder(bid); });
+  hit.reg.sheet.getRange(hit.row, v2Col_("MFG", "Run Folder Link")).setValue(run.getUrl());
+  return { ok: true, mfgId: mfgId, folderUrl: run.getUrl(), folderId: run.getId(), boards: boards.length };
+}
+
+/* ── v2.master — one row per live combination, rule recorded ──────────────── */
+function v2Master_(b) {
+  const reg = v2Sheet_("Master");
+  const head = v2HeaderRow_(reg.sheet, "Master");
+  const f = b.values || {};
+  reg.sheet.appendRow(V2_COLUMNS.Master.map(function (c) { return f[c] != null ? f[c] : ""; }));
+  return { ok: true, row: reg.sheet.getLastRow(), registerUrl: reg.ss.getUrl() };
+}
+
+/* ── v2.governance — the auditable one-liner (rules calls, gate record) ───── */
+function v2Governance_(b) {
+  const projectId = String(b.projectId || "").trim().toUpperCase();
+  const proj = v2FindRow_("Projects", projectId);
+  if (!proj) return { ok: false, error: projectId + " has no Projects row" };
+  const pfid = v2DriveId_(proj.values[v2Col_("Projects", "Drive Folder Link") - 1]);
+  if (!pfid) return { ok: false, error: projectId + " has no folder yet — provision first" };
+  const gov = v2SubByPattern_(DriveApp.getFolderById(pfid), /Governance/i);
+  if (!gov) return { ok: false, error: "No 00-Governance folder inside " + projectId };
+  const docName = projectId + "_Governance-Log_v1.0";
+  let doc = null;
+  const it = gov.getFilesByName(docName);
+  if (it.hasNext()) doc = DocumentApp.openById(it.next().getId());
+  else {
+    doc = DocumentApp.create(docName);
+    DriveApp.getFileById(doc.getId()).moveTo(gov);
+    doc.getBody().appendParagraph(projectId + " — governance log").setHeading(DocumentApp.ParagraphHeading.HEADING1);
+  }
+  doc.getBody().appendParagraph(v2Today_() + " · " + String(b.by || "portal") + " — " + String(b.line || ""));
+  doc.saveAndClose();
+  return { ok: true, docUrl: doc.getUrl() };
+}
+
+/* ── v2.health — the sweep the register's colours do by hand ──────────────── */
+function v2Health_() {
+  const out = { ok: true, duplicates: [], formatBreaches: [], linkDebt: [], qtyMismatch: [] };
+  const LINKED = { Projects: "Drive Folder Link", PCB: "Drive Folder Link", FW: "Drive Folder Link", Enclosure: "Drive Folder Link", MFG: "Run Folder Link" };
+  for (const fam in V2_TABS) {
+    if (fam === "MASTER") continue;
+    const t = V2_TABS[fam];
+    let reg, ids;
+    try { reg = v2Sheet_(t.tab); ids = v2Ids_(reg.sheet, t.tab); } catch (e) { out.ok = false; out.error = String(e && e.message || e); return out; }
+    const seen = {};
+    ids.rows.filter(function (r) { return !r.example; }).forEach(function (r) {
+      const k = r.id.toUpperCase();
+      if (seen[k]) out.duplicates.push(t.tab + ": " + r.id + " (rows " + seen[k] + " & " + r.row + ")");
+      else seen[k] = r.row;
+      if (t.regex && r.id.indexOf("EB-") === 0 && !t.regex.test(r.id)) out.formatBreaches.push(t.tab + "!" + r.row + " " + r.id);
+    });
+    if (LINKED[t.tab]) {
+      const col = v2Col_(t.tab, LINKED[t.tab]);
+      ids.rows.filter(function (r) { return !r.example; }).forEach(function (r) {
+        const v = reg.sheet.getRange(r.row, col).getDisplayValue();
+        if (!String(v).trim()) out.linkDebt.push(t.tab + ": " + r.id);
+      });
+    }
+  }
+  try {
+    const reg = v2Sheet_("MFG");
+    const ids = v2Ids_(reg.sheet, "MFG");
+    ids.rows.filter(function (r) { return !r.example; }).forEach(function (r) {
+      const ordered = parseInt(String(r.id).match(/-(\d+)$/)[1], 10);
+      const delivered = String(reg.sheet.getRange(r.row, v2Col_("MFG", "Delivered Qty")).getDisplayValue()).trim();
+      if (delivered && parseInt(delivered, 10) !== ordered) out.qtyMismatch.push(r.id + " delivered " + delivered);
+    });
+  } catch (e) { /* MFG tab issues already reported above */ }
+  return out;
 }

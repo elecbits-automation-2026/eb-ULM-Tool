@@ -331,6 +331,53 @@ export function UlmProvider({ session, children }) {
     return c.clientId;
   }, [live, rpc, refresh, data.orgs]);
 
+  /* ── SOP v2.0 flows ────────────────────────────────────────────────────
+     The register (Google Sheet) owns identity; these record the workflow.
+     Every one is role-gated server-side — the browser only asks.          */
+  const v2Roles = useCallback(async () => {
+    if (!live) return ["registrar", "pm", "pm_head", "scs", "solution_architect", "deal_owner"];
+    const { data, error } = await supabase.schema("ulm").from("roles").select("role").eq("person_id", me);
+    if (error) return [];
+    return (data || []).map((r) => r.role);
+  }, [live, me]);
+
+  const v2Deals = useCallback(async () => {
+    if (!live) return [];
+    const { data, error } = await supabase.schema("ulm").from("deal_links").select("*").order("created_at", { ascending: false });
+    if (error) throw new Error(error.message);
+    return data || [];
+  }, [live]);
+
+  const v2GateState = useCallback(async (dealId) => {
+    if (!live) return [];
+    const { data, error } = await supabase.schema("ulm").rpc("gate_state", { p_deal: dealId });
+    if (error) throw new Error(error.message);
+    return data || [];
+  }, [live]);
+
+  const v2ConfirmGate = useCallback(async (dealId, condition, evidence, note) =>
+    rpc("portal_confirm_gate", { p_deal: dealId, p_condition: condition, p_evidence: evidence || "", p_note: note || null }), [rpc]);
+
+  const v2TriageRequest = useCallback(async (p) =>
+    rpc("portal_triage_request", { p_request: p.requestId, p_client_id: p.clientId, p_deal_id: p.dealId, p_org: p.orgId || null, p_overtake: p.overtake || "pending", p_note: p.note || null }), [rpc]);
+
+  const v2SetDealStatus = useCallback(async (dealId, status, poRef, reason) =>
+    rpc("portal_set_deal_status", { p_deal: dealId, p_status: status, p_po_ref: poRef || null, p_reason: reason || null }), [rpc]);
+
+  const v2ConvertDeal = useCallback(async (p) => {
+    const row = await rpc("portal_convert_deal", {
+      p_deal: p.dealId, p_project_id: p.projectId, p_name: p.name, p_kind_v2: p.kindV2,
+      p_pm: p.pm || null, p_deadline: p.deadline || null, p_path_b: !!p.pathB, p_desc: p.desc || null,
+    });
+    await refresh();
+    return row;
+  }, [rpc, refresh]);
+
+  const v2RecordProvisioning = useCallback(async (identifier, family, state, extra = {}) =>
+    rpc("record_id_provisioning", { p_identifier: identifier, p_family: family, p_state: state,
+      p_folder_id: extra.folderId || null, p_folder_url: extra.folderUrl || null,
+      p_repo_url: extra.repoUrl || null, p_error: extra.error || null }), [rpc]);
+
   const renameClient = useCallback(async (clientId, name) => {
     if (live) {
       await rpc("portal_rename_client", { p_client_id: clientId, p_name: name });
@@ -423,7 +470,8 @@ export function UlmProvider({ session, children }) {
     toasts, toast,
     submitRequest, saveReview, acceptRequest, rejectRequest, decide,
     createClient, renameClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder,
-  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, renameClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder]);
+    v2Roles, v2Deals, v2GateState, v2ConfirmGate, v2TriageRequest, v2SetDealStatus, v2ConvertDeal, v2RecordProvisioning,
+  }), [live, loading, loadError, refresh, people, me, my, realMe, isAdmin, data, toasts, toast, submitRequest, saveReview, acceptRequest, rejectRequest, decide, createClient, renameClient, createProject, setTeam, allocateOwner, saveProvisioning, recordPcbFolder, v2Roles, v2Deals, v2GateState, v2ConfirmGate, v2TriageRequest, v2SetDealStatus, v2ConvertDeal, v2RecordProvisioning]);
 
   return <Ctx.Provider value={ctx}>{children}</Ctx.Provider>;
 }

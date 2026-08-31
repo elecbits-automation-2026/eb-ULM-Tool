@@ -120,3 +120,104 @@ export const LLD_QUESTIONS = [
 ];
 
 export const LLD_SECTIONS = [...new Set(LLD_QUESTIONS.map((q) => q.sec))];
+
+/* ═══ SOP v2.0 vocabulary ═══════════════════════════════════════════════════
+   Meaning-free identifiers: EB-{FAMILY}-{YY}-{nnnn}, with derived ids
+   carrying their parent in full plus exactly one block. Everything
+   descriptive lives in register columns, never in the name.                 */
+
+export const V2_FAMILIES = [
+  { k: "C",   label: "Client",     tab: "Clients",     re: /^EB-C-\d{2}-\d{4}$/,   eg: "EB-C-26-0001" },
+  { k: "P",   label: "Project",    tab: "Projects",    re: /^EB-P-\d{2}-\d{4}$/,   eg: "EB-P-26-0001", gated: true },
+  { k: "PCB", label: "Board",      tab: "PCB",         re: /^EB-PCB-\d{2}-\d{4}$/, eg: "EB-PCB-26-0001" },
+  { k: "FW",  label: "Firmware",   tab: "FW",          re: /^EB-FW-\d{2}-\d{4}$/,  eg: "EB-FW-26-0001" },
+  { k: "ED",  label: "Enclosure",  tab: "Enclosure",   re: /^EB-ED-\d{2}-\d{4}$/,  eg: "EB-ED-26-0001" },
+  { k: "V",   label: "Vendor",     tab: "Vendors",     re: /^EB-V-\d{2}-\d{4}$/,   eg: "EB-V-26-0001" },
+  { k: "PRD", label: "Product",    tab: "PRD",         re: /^EB-PRD-\d{2}-\d{4}$/, eg: "EB-PRD-26-0001", readOnly: true },
+];
+export const V2_DERIVED = [
+  { k: "DEAL",      label: "Deal",         parent: "Client",  re: /^EB-C-\d{2}-\d{4}-D\d{2}$/,                  eg: "EB-C-26-0001-D03" },
+  { k: "BOM",       label: "BOM revision", parent: "Board",   re: /^EB-PCB-\d{2}-\d{4}-BOM-\d{3}$/,             eg: "EB-PCB-26-0001-BOM-002" },
+  { k: "DEALINPUT", label: "Deal input",   parent: "Deal",    re: /^EB-C-\d{2}-\d{4}-D\d{2}-(PCB|BOM)-\d{3}$/,  eg: "EB-C-26-0002-D01-PCB-001" },
+  { k: "MFG",       label: "Run",          parent: "Project", re: /^EB-P-\d{2}-\d{4}-MFG-\d{3}-\d+$/,           eg: "EB-P-26-0001-MFG-002-50" },
+];
+
+/* The deal ladder. Lost and Dropped are terminal — a revived idea takes the
+   next Deal ID under the same client (rule 0.4). */
+export const DEAL_STATUSES = [
+  { k: "Open",        c: "var(--txt2)" },
+  { k: "Quoted",      c: "var(--blue)" },
+  { k: "Negotiation", c: "var(--amber)" },
+  { k: "Won",         c: "var(--green)" },
+  { k: "Lost",        c: "var(--red)" },
+  { k: "Dropped",     c: "var(--txt3)" },
+];
+export const DEAL_TERMINAL = ["Lost", "Dropped"];
+
+/* Register Kind — which path the project runs. Path A designs, Path B builds
+   a design the client owns. */
+export const V2_KINDS = [
+  { k: "RND",     label: "R&D",            path: "A", tool: "odm",      hint: "Elecbits designs it" },
+  { k: "RND+MFG", label: "R&D + Mfg",      path: "A", tool: "odm",      hint: "design then build" },
+  { k: "MFG",     label: "Manufacturing",  path: "B", tool: "boxbuild", hint: "client owns the design" },
+  { k: "SCS",     label: "Supply chain",   path: "B", tool: "boxbuild", hint: "source and build" },
+  { k: "INT",     label: "Internal",       path: "A", tool: "product",  hint: "Elecbits' own programme" },
+];
+export const kindV2Of = (k) => V2_KINDS.find((x) => x.k === k) || null;
+
+/* The six sanction-gate conditions. Each is confirmed by ONE role — shared
+   ownership is what the SOP forbids most explicitly. */
+export const GATE_CONDITIONS = [
+  { n: 0, label: "Source deal is WON",        role: "deal_owner",         evidence: "PO reference", who: "Deal Owner" },
+  { n: 1, label: "Commercial clarity",        role: "scs",                evidence: "Signed PO / PI / contract, filed in 03-SCS/05-Contracts-and-Legal", who: "SCS" },
+  { n: 2, label: "Customer LLD locked",       role: "pm",                 evidence: "Frozen, versioned, dated PDF", who: "Project Manager", pathB: "Design pack received & registered" },
+  { n: 3, label: "Designer LLD locked",       role: "solution_architect", evidence: "Frozen, versioned, dated PDF", who: "Solution Architect", pathB: "Design pack complete & version-stamped" },
+  { n: 4, label: "One owner per domain",      role: "pm_head",            evidence: "Recorded in 00-Governance", who: "PM Head" },
+  { n: 5, label: "Client is in the register", role: "registrar",          evidence: "Row on the Clients tab", who: "Registrar" },
+];
+
+export const V2_ROLES = ["registrar", "pm", "pm_head", "scs", "solution_architect", "deal_owner"];
+
+/* Controlled vocabularies — the register's Lists tab. */
+export const SECTORS_15 = ["Mobility & EV", "Energy & Power", "Industrial & Automation", "Electronics Manufacturing", "IoT & Connected Devices", "Consumer Electronics", "Medical & Healthcare", "Aerospace & Defence", "Agriculture & Food", "Infrastructure & Smart Cities", "Retail & Payments", "Research & Education", "Government & Institutional", "Robotics & Drones", "Other"];
+export const ORG_SIZES_V2 = ["Proto-Level Startup (PL)", "Mid-Level Startup (ML)", "Enterprise (EL)", "EMS (EM)", "Government (GO)", "Individual / Unknown (UN)"];
+export const BUILD_STAGES = ["Proto / EVT", "Pilot / DVT", "Pre-Production / PVT", "Mass Production", "Repeat Order"];
+export const MFG_TYPES = ["PCBA", "Box-build", "PCB Fabrication", "Enclosure Production", "Wire Harness", "Other"];
+export const PCB_CLASSES = ["Gateway", "Sensor Node", "Controller", "Power", "Other"];
+export const NDA_STATUSES = ["Signed", "Sent", "Not Signed", "NA"];
+
+/* The issuance rules (SOP §6). The portal shows these when something changes
+   and the PM must decide what gets a new identifier. */
+export const ISSUANCE_RULES = [
+  { rule: "0.1",  what: "New deal opened",                    gives: "Deal (client if new)" },
+  { rule: "0.2",  what: "Deal WON, PO confirmed, PM sanctions", gives: "Project" },
+  { rule: "0.3",  what: "Deal LOST or DROPPED",               gives: "nothing — the row stays" },
+  { rule: "0.4",  what: "A dead deal is revived",             gives: "a NEW Deal (never reopen)" },
+  { rule: "1.0",  what: "New client onboarded",               gives: "Client + Deal + Project" },
+  { rule: "2.0",  what: "Same client, new product",           gives: "Deal + Project" },
+  { rule: "3.0",  what: "Firmware feature change, same board", gives: "Firmware" },
+  { rule: "4.0",  what: "Another board added",                gives: "PCB + BOM + FW" },
+  { rule: "5.0",  what: "PCB change judged MINOR",            gives: "PCB + BOM + FW (same project)" },
+  { rule: "6.0",  what: "PCB change judged MAJOR",            gives: "a NEW Project" },
+  { rule: "7.0",  what: "Board reused on another project",    gives: "Project + FW (board unchanged)" },
+  { rule: "8.0",  what: "Firmware bug fix",                   gives: "nothing — a Git version" },
+  { rule: "9.0",  what: "Parts substituted",                  gives: "BOM" },
+  { rule: "10.0", what: "Production quantity changes",        gives: "MFG run" },
+  { rule: "11.0", what: "Vendor or route changes",            gives: "MFG run" },
+  { rule: "12.0", what: "Non-design project opened",          gives: "Deal + Project + deal inputs + MFG" },
+  { rule: "13.0", what: "Non-design, client changes design",  gives: "a NEW Deal + Project" },
+  { rule: "14.0", what: "Non-design, same design new qty",    gives: "MFG run" },
+  { rule: "15.0", what: "Client re-issues their BOM",         gives: "a new deal-input BOM" },
+];
+
+/* The MAJOR/minor test (SOP §6.4): two or more MAJOR indicators means a new
+   project; genuinely borderline is treated as MAJOR. */
+export const MAJOR_MINOR = {
+  minor: ["Component substitution or footprint change", "Layout revision, routing fix, errata correction", "Connector or mounting-hole repositioning", "Passive values changed", "Same block diagram, same firmware interface", "The client's requirements are unchanged"],
+  major: ["A functional block is added or removed", "The MCU or wireless platform changes", "The product does something it could not before", "The firmware architecture must be reworked", "The client re-issued the requirement document", "Commercial scope or quotation is re-cut"],
+};
+
+/* File naming law: [Identifier]_[FileName]_v[X.Y] */
+export const fileNameFor = (identifier, name, version = "1.0", ext = "") =>
+  `${identifier}_${String(name).trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9-]/g, "")}_v${version}${ext ? "." + ext.replace(/^\./, "") : ""}`;
+export const FILE_NAME_RE = /^EB-[A-Z0-9-]+_[A-Za-z0-9-]+_v\d+\.\d+(\.[A-Za-z0-9]+)?$/;
