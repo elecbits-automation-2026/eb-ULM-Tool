@@ -228,6 +228,11 @@ function handle_(body) {
       // Function — that variant runs the Claude loop in Supabase and only
       // borrows this script's Drive hands.
       case "tool.run":          return json_({ ok: true, result: runAiTool_(String(body.name || ""), body.input || {}) });
+      // ── SOP v2.0 registrar engine (see the V2 section at the end) ──
+      case "v2.locate":         return json_(v2Locate_());
+      case "v2.validate":       return json_(v2Validate_());
+      case "v2.allocate":       return json_(v2Allocate_(body));
+      case "v2.list":           return json_(v2List_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -1422,4 +1427,313 @@ function walk_(folder, onFile, depth) {
   while (files.hasNext()) onFile(files.next());
   const folders = folder.getFolders();
   while (folders.hasNext()) walk_(folders.next(), onFile, depth + 1);
+}
+
+
+/* ═══ SOP v2.0 — THE REGISTRAR ENGINE ═══════════════════════════════════════
+   Implements Eb-SOP_Project-Creation-and-ID-Creation_v2.0 against the LIVE
+   Eb-Master_Register (a native Google Sheet — the one the XOR bot already
+   writes). Coexists with every v1 action above; nothing v1 changes until the
+   Phase-1 UI ships.
+
+   Doctrine (the ten laws, in code):
+   - The sheet is the sole identity authority. ALLOCATION IS THE APPEND: the
+     next id is computed and its row written in the same locked execution,
+     then re-read; on a collision with a co-writer (XOR), the LATER row
+     repairs itself to the next free serial — the shared convention.
+   - Independent ids: EB-{C,P,PCB,FW,ED,V}-YY-nnnn. YY is the Asia/Kolkata
+     year at issue; serials restart at 0001 each January (the allocator only
+     counts rows of the current year). PRD is read-only here; EB-PO / EB-T
+     are untouched live systems. Serial 0000 is never issued (EB-C-26-0000
+     is reserved for Elecbits Internal).
+   - Family P is REFUSED by the generic allocator — a Project ID exists only
+     through the gate-checked conversion (Phase 1), per Law 10.
+   - Derived ids run per parent, never per year: Deal D%02 per client,
+     BOM-%03 per board, deal-input PCB/BOM-%03 per deal, MFG-%03 per project
+     (stem + ordered qty, frozen).
+   - Blue worked-example rows that ship with the workbook are excluded from
+     counting and reported by v2.validate; allocation REFUSES to run while
+     any is present (delete them at cutover — real rows already exist).     */
+
+const V2 = {
+  // Pin the LIVE register by fileId (run v2.locate / testLocateRegister to
+  // find it — it must be the same file XOR's binding points at). Blank =
+  // v2 actions refuse with a clear message. Property V2_REGISTER_ID wins,
+  // so pinning survives code pastes just like SHARED_TOKEN.
+  MASTER_REGISTER_ID: "",
+  NAME_HINT: "Eb-Master_Register",
+};
+
+const V2_TABS = {
+  C:    { tab: "Clients",     regex: /^EB-C-\d{2}-\d{4}$/,   prefix: "EB-C" },
+  P:    { tab: "Projects",    regex: /^EB-P-\d{2}-\d{4}$/,   prefix: "EB-P" },
+  PCB:  { tab: "PCB",         regex: /^EB-PCB-\d{2}-\d{4}$/, prefix: "EB-PCB" },
+  FW:   { tab: "FW",          regex: /^EB-FW-\d{2}-\d{4}$/,  prefix: "EB-FW" },
+  ED:   { tab: "Enclosure",   regex: /^EB-ED-\d{2}-\d{4}$/,  prefix: "EB-ED" },
+  V:    { tab: "Vendors",     regex: /^EB-V-\d{2}-\d{4}$/,   prefix: "EB-V" },
+  PRD:  { tab: "PRD",         regex: /^EB-PRD-\d{2}-\d{4}$/, prefix: "EB-PRD", readOnly: true },
+  DEAL:      { tab: "Deals",       regex: /^EB-C-\d{2}-\d{4}-D\d{2}$/ },
+  BOM:       { tab: "BOM",         regex: /^EB-PCB-\d{2}-\d{4}-BOM-\d{3}$/ },
+  DEALINPUT: { tab: "Deal Inputs", regex: /^EB-C-\d{2}-\d{4}-D\d{2}-(PCB|BOM)-\d{3}$/ },
+  MFG:       { tab: "MFG",         regex: /^EB-P-\d{2}-\d{4}-MFG-\d{3}-\d+$/ },
+  MASTER:    { tab: "Master" },
+};
+
+/* Explicit column order per tab — v2 writes NEVER go through the fuzzy v1
+   HEADER_ALIASES (a Master row would corrupt under them). Straight from
+   Eb-Master_Register_v2.0.xlsx. */
+const V2_COLUMNS = {
+  Clients:       ["Client ID", "Legacy ID", "Organisation Name", "Sector", "Org Size", "Status", "Drive Folder Link", "Date Added", "Added By", "Point of Contact", "Notes"],
+  Deals:         ["Deal ID", "Client ID", "Deal Name", "Status", "Deal Value", "Currency", "Deal Owner", "Date Opened", "Date Closed", "Converted to Project ID", "Loss Reason", "Drive Folder Link", "Notes"],
+  "Deal Inputs": ["Input ID", "Deal ID", "Client ID", "Type", "Description", "Received On", "Version as Received", "Linked PCB Input ID", "Status", "Notes"],
+  Projects:      ["Project ID", "Source Deal ID", "Client ID", "Project Name", "Kind", "Status", "Project Manager", "Start Date", "Drive Folder Link", "Date Added", "Added By", "Notes"],
+  PCB:           ["PCB ID", "Project ID", "Name / Alias", "Drive Folder Link", "Legacy SKU Code", "Silkscreen Marking", "Platform", "Class", "Version", "Status", "Date Added", "Added By", "Notes"],
+  BOM:           ["BOM ID", "PCB ID", "Revision Reason", "Line Count", "Costed?", "Cost per Unit", "Costed On", "Status", "Date Added", "Added By", "Notes"],
+  FW:            ["FW ID", "PCB ID", "Project ID", "Platform", "Latest Version (Git tag)", "Repo", "Drive Folder Link", "Status", "Date Added", "Added By", "Notes"],
+  Enclosure:     ["Enclosure ID", "Project ID", "Name", "Drive Folder Link", "Material", "Version", "Status", "Date Added", "Added By", "Notes"],
+  MFG:           ["MFG ID", "Project ID", "Type", "Build Stage", "Ordered Qty", "Delivered Qty", "Boards in this run", "PARENT board", "Run Folder Link", "Status", "Date Added", "Added By", "Notes"],
+  Vendors:       ["Vendor ID", "Legacy ID", "Vendor Name", "Country", "Primary Service", "Additional Services", "NDA Status", "Status", "Date Added", "Added By", "Notes"],
+  Master:        ["Client ID", "Deal ID", "Project ID", "PCB ID", "BOM ID", "FW ID", "Enclosure ID", "MFG ID", "Client Name (auto)", "Project Name (auto)", "Rule", "Notes"],
+};
+
+/* The workbook's blue worked-example rows (SOP §5.4). Counting ignores them;
+   allocation refuses while any is still present. */
+const V2_EXAMPLE_IDS = [
+  "EB-C-26-0001", "EB-C-26-0002",
+  "EB-C-26-0001-D01", "EB-C-26-0001-D02", "EB-C-26-0001-D03", "EB-C-26-0001-D04",
+  "EB-C-26-0002-D01", "EB-C-26-0002-D02",
+  "EB-C-26-0002-D01-PCB-001", "EB-C-26-0002-D01-PCB-002",
+  "EB-C-26-0002-D01-BOM-001", "EB-C-26-0002-D01-BOM-002",
+  "EB-P-26-0001", "EB-P-26-0002",
+  "EB-PCB-26-0001", "EB-PCB-26-0002", "EB-PCB-26-0003",
+  "EB-PCB-26-0001-BOM-001", "EB-PCB-26-0002-BOM-001", "EB-PCB-26-0003-BOM-001",
+  "EB-FW-26-0001", "EB-FW-26-0002", "EB-FW-26-0003",
+  "EB-ED-26-0001", "EB-PRD-26-0001", "EB-V-26-0001",
+  "EB-P-26-0001-MFG-001-05", "EB-P-26-0001-MFG-002-50",
+  "EB-P-26-0002-MFG-001-1000", "EB-P-26-0002-MFG-002-2500",
+];
+const v2IsExample_ = (id) => V2_EXAMPLE_IDS.indexOf(String(id).trim()) >= 0;
+
+const v2Yy_ = () => Utilities.formatDate(new Date(), "Asia/Kolkata", "yy");
+const v2Today_ = () => Utilities.formatDate(new Date(), "Asia/Kolkata", "yyyy-MM-dd");
+const pad_ = (n, w) => { let s = String(n); while (s.length < w) s = "0" + s; return s; };
+
+function v2RegisterId_() {
+  let id = "";
+  try { id = String(PropertiesService.getScriptProperties().getProperty("V2_REGISTER_ID") || "").trim(); }
+  catch (e) { /* fall through */ }
+  return id || String(V2.MASTER_REGISTER_ID || "").trim();
+}
+
+function v2Sheet_(tabName) {
+  const id = v2RegisterId_();
+  if (!id) throw new Error("The v2 register is not pinned. Run v2.locate, pick the LIVE Eb-Master_Register (the file XOR writes), and store its fileId as Script property V2_REGISTER_ID.");
+  const ss = SpreadsheetApp.openById(id);
+  const sh = ss.getSheetByName(tabName);
+  if (!sh) throw new Error("The pinned register has no '" + tabName + "' tab — is this really Eb-Master_Register_v2.0? Tabs: " + ss.getSheets().map(function (s) { return s.getName(); }).join(", "));
+  return { ss: ss, sheet: sh };
+}
+
+/* The header row: the first row whose first cell equals the tab's first
+   column name (title rows sit above it). */
+function v2HeaderRow_(sheet, tabName) {
+  const want = (V2_COLUMNS[tabName] || [])[0];
+  const probe = sheet.getRange(1, 1, Math.min(sheet.getLastRow(), 6), 1).getValues();
+  for (let i = 0; i < probe.length; i++) {
+    if (String(probe[i][0]).trim() === want) return i + 1;
+  }
+  throw new Error("Could not find the header row of '" + tabName + "' (looked for '" + want + "' in column A)");
+}
+
+/* All ids in a tab's first column below the header, with row numbers and
+   font colors (blue text = shipped example). */
+function v2Ids_(sheet, tabName) {
+  const head = v2HeaderRow_(sheet, tabName);
+  const last = sheet.getLastRow();
+  if (last <= head) return { head: head, rows: [] };
+  const rng = sheet.getRange(head + 1, 1, last - head, 1);
+  const vals = rng.getValues();
+  const colors = rng.getFontColors();
+  const rows = [];
+  for (let i = 0; i < vals.length; i++) {
+    const id = String(vals[i][0] == null ? "" : vals[i][0]).trim();
+    if (!id) continue;
+    const c = String(colors[i][0] || "").toLowerCase();
+    const blue = ["#0000ff", "#1155cc", "#4a86e8", "#3c78d8", "#0b5394"].indexOf(c) >= 0;
+    rows.push({ id: id, row: head + 1 + i, example: blue || v2IsExample_(id) });
+  }
+  return { head: head, rows: rows };
+}
+
+/* ── v2.locate — find the live register so a human can pin it ────────────── */
+function v2Locate_() {
+  const out = { ok: true, pinned: v2RegisterId_() || null, candidates: [] };
+  const it = DriveApp.searchFiles("title contains '" + V2.NAME_HINT + "' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false");
+  while (it.hasNext() && out.candidates.length < 8) {
+    const f = it.next();
+    const cand = { fileId: f.getId(), name: f.getName(), url: f.getUrl(), updated: f.getLastUpdated().toISOString() };
+    try {
+      const tabs = SpreadsheetApp.openById(f.getId()).getSheets().map(function (s) { return s.getName(); });
+      cand.hasApparatus = tabs.indexOf("Counters") >= 0 && tabs.indexOf("Rules") >= 0;
+      cand.hasCoreTabs = tabs.indexOf("Clients") >= 0 && tabs.indexOf("Deals") >= 0;
+    } catch (e) { cand.error = String(e && e.message || e); }
+    out.candidates.push(cand);
+  }
+  if (!out.candidates.length) out.note = "No native Sheet named like '" + V2.NAME_HINT + "' found. If only the .xlsx exists, convert it ONCE (File → Save as Google Sheets), archive the .xlsx, then locate again.";
+  return out;
+}
+
+/** Editor helper: run this, read the log, put the right fileId into the
+    V2_REGISTER_ID Script property. */
+function testLocateRegister() {
+  Logger.log(JSON.stringify(v2Locate_(), null, 2));
+}
+
+/* ── v2.validate — is the pinned register ready for allocation? ──────────── */
+function v2Validate_() {
+  const out = { ok: true, registerId: v2RegisterId_() || null, tabs: {}, exampleRows: [], problems: [] };
+  if (!out.registerId) { out.ok = false; out.problems.push("Not pinned — run v2.locate first"); return out; }
+  for (const fam in V2_TABS) {
+    const t = V2_TABS[fam];
+    if (fam === "MASTER") continue;
+    try {
+      const reg = v2Sheet_(t.tab);
+      const ids = v2Ids_(reg.sheet, t.tab);
+      const real = ids.rows.filter(function (r) { return !r.example; });
+      // Strict-format check applies only to v2-style ids; legacy ids (mixed
+      // case "Eb-…") are exempt from the format law and from counters.
+      const bad = real.filter(function (r) { return t.regex && r.id.indexOf("EB-") === 0 && !t.regex.test(r.id); });
+      out.tabs[t.tab] = { rows: ids.rows.length, real: real.length, examples: ids.rows.length - real.length };
+      ids.rows.filter(function (r) { return r.example; }).forEach(function (r) { out.exampleRows.push(t.tab + "!" + r.row + " " + r.id); });
+      if (bad.length) out.problems.push(t.tab + ": " + bad.length + " rows breach the format law (legacy ids are exempt)");
+    } catch (e) { out.ok = false; out.problems.push(String(e && e.message || e)); }
+  }
+  if (out.exampleRows.length) out.problems.push(out.exampleRows.length + " blue worked-example rows still present — delete them before allocation (SOP §5.4); the allocator refuses while they exist.");
+  out.allocationReady = out.ok && out.exampleRows.length === 0;
+  return out;
+}
+
+/* ── v2.allocate — the registrar's one door ────────────────────────────────
+   { family: C|PCB|FW|ED|V }                      independent
+   { family: DEAL,      parent: <Client ID> }
+   { family: BOM,       parent: <PCB ID> }
+   { family: DEALINPUT, parent: <Deal ID>, type: PCB|BOM }
+   { family: MFG,       parent: <Project ID>, qty: <ordered, positive int> }
+   plus fields: { "Organisation Name": "...", ... }   (explicit v2 columns)
+   Returns { ok, id, row, registerUrl }. Family P is refused — Project IDs
+   exist only through the gate-checked conversion.                          */
+function v2Allocate_(b) {
+  const fam = String(b.family || "").toUpperCase();
+  const t = V2_TABS[fam];
+  if (!t || fam === "MASTER") return { ok: false, error: "Unknown family: " + b.family };
+  if (fam === "P") return { ok: false, error: "Law 10: a Project ID is only minted by the sanction-gated conversion, never by the generic allocator." };
+  if (t.readOnly) return { ok: false, error: fam + " issuance is governed outside this SOP (read-only here)." };
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const reg = v2Sheet_(t.tab);
+    let ids = v2Ids_(reg.sheet, t.tab);
+    if (ids.rows.some(function (r) { return r.example; })) {
+      return { ok: false, error: "Blue worked-example rows are still in '" + t.tab + "' — run v2.validate and delete them first." };
+    }
+
+    const compute = function () {
+      ids = v2Ids_(reg.sheet, t.tab);
+      const valid = ids.rows.filter(function (r) { return t.regex.test(r.id); }).map(function (r) { return r.id; });
+      if (fam === "DEAL") {
+        const parent = String(b.parent || "").trim().toUpperCase();
+        if (!V2_TABS.C.regex.test(parent)) return { error: "DEAL needs a valid Client ID parent" };
+        v2AssertRow_("Clients", parent);
+        const n = Math.max.apply(null, [0].concat(valid.filter(function (id) { return id.indexOf(parent + "-D") === 0; }).map(function (id) { return parseInt(id.slice(-2), 10); })));
+        return { id: parent + "-D" + pad_(n + 1, 2) };
+      }
+      if (fam === "BOM") {
+        const parent = String(b.parent || "").trim().toUpperCase();
+        if (!V2_TABS.PCB.regex.test(parent)) return { error: "BOM needs a valid PCB ID parent" };
+        v2AssertRow_("PCB", parent);
+        const n = Math.max.apply(null, [0].concat(valid.filter(function (id) { return id.indexOf(parent + "-BOM-") === 0; }).map(function (id) { return parseInt(id.slice(-3), 10); })));
+        return { id: parent + "-BOM-" + pad_(n + 1, 3) };
+      }
+      if (fam === "DEALINPUT") {
+        const parent = String(b.parent || "").trim().toUpperCase();
+        const type = String(b.type || "").toUpperCase();
+        if (!V2_TABS.DEAL.regex.test(parent)) return { error: "A deal input needs a valid Deal ID parent" };
+        if (type !== "PCB" && type !== "BOM") return { error: "type must be PCB or BOM" };
+        v2AssertRow_("Deals", parent);
+        const stem = parent + "-" + type + "-";
+        const n = Math.max.apply(null, [0].concat(valid.filter(function (id) { return id.indexOf(stem) === 0; }).map(function (id) { return parseInt(id.slice(-3), 10); })));
+        return { id: stem + pad_(n + 1, 3) };
+      }
+      if (fam === "MFG") {
+        const parent = String(b.parent || "").trim().toUpperCase();
+        const qty = parseInt(b.qty, 10);
+        if (!V2_TABS.P.regex.test(parent)) return { error: "MFG needs a valid Project ID parent" };
+        if (!(qty > 0)) return { error: "MFG needs the ORDERED qty (positive integer, frozen at issue — Law 8)" };
+        v2AssertRow_("Projects", parent);
+        const runs = valid.filter(function (id) { return id.indexOf(parent + "-MFG-") === 0; })
+          .map(function (id) { return parseInt(id.slice(parent.length + 5, parent.length + 8), 10); });
+        const n = Math.max.apply(null, [0].concat(runs));
+        return { id: parent + "-MFG-" + pad_(n + 1, 3) + "-" + qty };
+      }
+      // independent: C, PCB, FW, ED, V — serials of the CURRENT year only
+      const yy = v2Yy_();
+      const stem = t.prefix + "-" + yy + "-";
+      const n = Math.max.apply(null, [0].concat(valid.filter(function (id) { return id.indexOf(stem) === 0; }).map(function (id) { return parseInt(id.slice(-4), 10); })));
+      return { id: stem + pad_(n + 1, 4) };   // year rolls via yy; serial 0000 never returned
+    };
+
+    let got = compute();
+    if (got.error) return { ok: false, error: got.error };
+
+    // ALLOCATION IS THE APPEND — then verify, and repair OUR later row on a
+    // collision with a co-writer (XOR's convention: the earlier row stands).
+    const cols = V2_COLUMNS[t.tab];
+    const writeRow = function (id) {
+      const fields = b.fields || {};
+      const row = cols.map(function (c, i) {
+        if (i === 0) return id;
+        if (c === "Date Added" || c === "Date Opened") return fields[c] || v2Today_();
+        if (c === "Added By") return fields[c] || String(b.by || "");
+        if (c === "Status") return fields[c] || (fam === "DEAL" ? "Open" : "Active");
+        return fields[c] != null ? fields[c] : "";
+      });
+      reg.sheet.appendRow(row);
+      return reg.sheet.getLastRow();
+    };
+
+    let myRow = writeRow(got.id);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      SpreadsheetApp.flush();
+      const check = v2Ids_(reg.sheet, t.tab).rows.filter(function (r) { return r.id.toUpperCase() === got.id.toUpperCase(); });
+      if (check.length <= 1) break;
+      const earliest = Math.min.apply(null, check.map(function (r) { return r.row; }));
+      if (myRow === earliest) break;                 // ours stands; the other writer repairs
+      got = compute();                               // take the next free id
+      if (got.error) return { ok: false, error: got.error };
+      reg.sheet.getRange(myRow, 1).setValue(got.id); // repair OUR row in place
+    }
+
+    return { ok: true, id: got.id, row: myRow, tab: t.tab, registerUrl: reg.ss.getUrl() };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Law 6 helper for derived parents: the parent must exist as a row. */
+function v2AssertRow_(tabName, id) {
+  const reg = v2Sheet_(tabName);
+  const ok = v2Ids_(reg.sheet, tabName).rows.some(function (r) { return r.id.toUpperCase() === String(id).toUpperCase(); });
+  if (!ok) throw new Error(id + " has no row in '" + tabName + "' — no register row, no children (Law 6).");
+}
+
+/* ── v2.list — read a v2 tab back (mirror / dashboards) ───────────────────── */
+function v2List_(b) {
+  const tabName = V2_COLUMNS[b.tab] ? b.tab : null;
+  if (!tabName) return { ok: false, error: "tab must be one of: " + Object.keys(V2_COLUMNS).join(", ") };
+  const reg = v2Sheet_(tabName);
+  const head = v2HeaderRow_(reg.sheet, tabName);
+  const lastRow = reg.sheet.getLastRow(), lastCol = Math.min(reg.sheet.getLastColumn(), 20);
+  const rows = lastRow > head ? reg.sheet.getRange(head + 1, 1, lastRow - head, lastCol).getDisplayValues() : [];
+  return { ok: true, headers: reg.sheet.getRange(head, 1, 1, lastCol).getDisplayValues()[0], rows: rows, registerUrl: reg.ss.getUrl() };
 }
