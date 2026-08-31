@@ -15,6 +15,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Inbox, FolderPlus, Layers, Users, Building2, PlugZap, Shield, Sun, Moon,
   Loader2, ArrowRight, LogOut, RefreshCw, CheckCircle2, AlertTriangle, Sparkles, FileSpreadsheet,
+  Briefcase, Wrench, BookMarked,
 } from "lucide-react";
 import elecbitsLogo from "./assets/elecbits-logo.jpg";
 import { supabaseConfigured, supabaseEnabled, supabaseInitError, supabaseUrl } from "./lib/supabase.js";
@@ -30,9 +31,17 @@ import ClientsModule from "./modules/Clients.jsx";
 import IntegrationsModule from "./modules/Integrations.jsx";
 import AssistantModule from "./modules/Assistant.jsx";
 import RegistersModule from "./modules/Registers.jsx";
+import DealsV2Module from "./modules/DealsV2.jsx";
+import SetupV2Module from "./modules/SetupV2.jsx";
+import RegistryV2Module from "./modules/RegistryV2.jsx";
 
 const NAV_GROUPS = [
+  /* SOP v2.0: a deal comes first and most deals die there, so the board
+     leads. Create-a-Project is the v1 flow, kept until the board replaces
+     it in daily use. */
   ["ULM", [
+    { id: "deals", label: "Deals & Sanction", icon: Briefcase, admin: true },
+    { id: "setup", label: "Project Setup", icon: Wrench, admin: true },
     { id: "inbox", label: "Sanction Inbox", icon: Inbox },
     { id: "create", label: "Create a Project", icon: FolderPlus, admin: true },
     { id: "projects", label: "Projects", icon: Layers },
@@ -44,6 +53,7 @@ const NAV_GROUPS = [
   ["Registry", [
     { id: "clients", label: "Clients", icon: Building2 },
     { id: "registers", label: "Registers", icon: FileSpreadsheet },
+    { id: "registry", label: "Register Console", icon: BookMarked, admin: true },
   ]],
   ["System", [
     { id: "integrations", label: "Integrations", icon: PlugZap, admin: true },
@@ -60,6 +70,9 @@ const TITLES = {
   integrations: ["Integrations", "Supabase · Drive · AI — every seam, visible"],
   assistant: ["Assistant", "Claude with Drive hands — search, read, draft docs"],
   registers: ["Registers", "The Drive masters mirrored in the database — CPTS & Client IDs"],
+  deals: ["Deals & Sanction", "Deal → won + PO → six-condition gate → project (SOP v2.0)"],
+  setup: ["Project Setup", "Boards, firmware, enclosures and manufacturing runs"],
+  registry: ["Register Console", "Cutover, every register tab, health sweep, vendors"],
 };
 
 const Shell = ({ dark, children }) => (
@@ -303,6 +316,9 @@ function AppBody({ dark, setDark, session }) {
           {view === "integrations" && <IntegrationsModule />}
           {view === "assistant" && <AssistantModule />}
           {view === "registers" && <RegistersModule />}
+          {view === "deals" && <DealsV2Module onOpenProject={openProject} />}
+          {view === "setup" && <SetupV2Module focusProjectId={projectFocus} />}
+          {view === "registry" && <RegistryV2Module />}
         </div>
       </main>
 

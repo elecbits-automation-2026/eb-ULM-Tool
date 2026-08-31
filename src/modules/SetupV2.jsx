@@ -37,6 +37,12 @@ const TABS = ["Projects", "PCB", "BOM", "FW", "Enclosure", "MFG", "Deal Inputs",
 
 /* The repo name is derived, never invented: recording-order step 11. */
 const repoFor = (fwId) => "fw-product-" + String(fwId || "").toLowerCase();
+
+/* ulm.id_provisioning.state is CHECK-constrained to exactly these four values;
+   anything else is a constraint violation, not a label. Kept as a map so no
+   call site can invent a fifth word and have the write silently rejected. */
+const PROV = { row: "row_written", folder: "folder_created", linked: "link_written", failed: "failed" };
+
 const orderedQtyOf = (mfgId) => {
   const m = String(mfgId || "").match(/-(\d+)$/);
   return m ? parseInt(m[1], 10) : NaN;
@@ -55,16 +61,23 @@ const Note = ({ tone = "amber", icon: Ic = AlertTriangle, children }) => (
   </div>
 );
 
-/* The recording order, drawn so it cannot be misremembered. */
+/* The recording order, drawn so it cannot be misremembered. The second line is
+   not decoration: the allocator only ever appends, so every button under this
+   strip is one-way — people click faster when they think a mistake is editable. */
 const LawStrip = ({ step = 0, note }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 10.5, fontWeight: 700, color: "var(--txt3)", textTransform: "uppercase", letterSpacing: ".05em" }}>
-    {["Register row", "Folder", "Link back"].map((s, i) => (
-      <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-        <span style={{ color: i < step ? "var(--green)" : i === step ? "var(--acc)" : "var(--txt3)" }}>{i + 1}. {s}</span>
-        {i < 2 && <ChevronRight size={11} style={{ opacity: 0.5 }} />}
-      </span>
-    ))}
-    {note && <span style={{ textTransform: "none", letterSpacing: 0, fontWeight: 500, color: "var(--txt3)" }}>· {note}</span>}
+  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontSize: 10.5, fontWeight: 700, color: "var(--txt3)", textTransform: "uppercase", letterSpacing: ".05em" }}>
+      {["Register row", "Folder", "Link back"].map((s, i) => (
+        <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ color: i < step ? "var(--green)" : i === step ? "var(--acc)" : "var(--txt3)" }}>{i + 1}. {s}</span>
+          {i < 2 && <ChevronRight size={11} style={{ opacity: 0.5 }} />}
+        </span>
+      ))}
+      {note && <span style={{ textTransform: "none", letterSpacing: 0, fontWeight: 500, color: "var(--txt3)" }}>· {note}</span>}
+    </div>
+    <div style={{ fontSize: 10.5, color: "var(--txt3)", lineHeight: 1.55 }}>
+      An allocated identifier is permanent and is never reused — a mistake is corrected with a new row, never by editing or re-issuing the id.
+    </div>
   </div>
 );
 
@@ -103,8 +116,26 @@ const FolderLink = ({ url }) => (url
 /* ── the module ───────────────────────────────────────────────────────────── */
 
 export default function SetupV2Module({ focusProjectId }) {
-  const { projects, people, me, toast, live, v2RecordProvisioning } = useUlm();
+  const { projects, people, me, toast, live, v2RecordProvisioning, v2Roles } = useUlm();
   const by = useMemo(() => people.find((p) => p.id === me)?.name || "portal", [people, me]);
+
+  /* Every write on this page is role-checked server-side, so ask once what the
+     signed-in person actually holds. undefined = still reading, null = the role
+     table could not be read (unknown, not "holds nothing" — v2Roles returns the
+     full list for admins and null on failure), array = the answer. */
+  const [roles, setRoles] = useState(undefined);
+  useEffect(() => {
+    let dead = false;
+    (async () => {
+      try { const r = await v2Roles(); if (!dead) setRoles(r ?? null); }
+      catch { if (!dead) setRoles(null); }
+    })();
+    return () => { dead = true; };
+  }, [v2Roles]);
+  const rolesUnknown = roles === null;
+  /* Unknown is permissive on purpose: refusing on a read failure would lock a
+     real registrar out of their own runbook. The proxy still checks. */
+  const isRegistrar = roles == null ? true : roles.includes("registrar");
 
   const [reg, setReg] = useState(null);          // { tab: {headers, rows} }
   const [regUrl, setRegUrl] = useState("");
@@ -158,7 +189,7 @@ export default function SetupV2Module({ focusProjectId }) {
     (projects || []).forEach((p) => {
       if (!p.projectId || seen.has(p.projectId.toUpperCase())) return;
       seen.add(p.projectId.toUpperCase());
-      list.push({ id: p.projectId, name: p.name || p.projectId, kind: p.kindV2 || p.kind_v2 || "", client: p.clientName || p.clientId || "", src: "db" });
+      list.push({ id: p.projectId, name: p.name || p.projectId, kind: p.kindV2 || "", client: p.clientName || p.clientId || "", src: "db" });
     });
     rowsOf("Projects").forEach((r) => {
       const id = r["Project ID"];
@@ -179,21 +210,45 @@ export default function SetupV2Module({ focusProjectId }) {
   /* ── this project's world ──────────────────────────────────────────────── */
   const projRow = useMemo(() => rowsOf("Projects").find((r) => r["Project ID"]?.toUpperCase() === pid.toUpperCase()) || null, [rowsOf, pid]);
   const opt = options.find((o) => o.id === pid) || null;
-  const kindKey = kindOverride || projRow?.Kind || opt?.kind || "";
+  /* The register is the only thing that can settle the path. The chips below
+     shape what this page *explains* while the Kind column is being fixed; they
+     deliberately do not unlock issuing, because guessing Path A for what may be
+     an MFG/SCS project is exactly the mistake §6.3 exists to prevent. */
+  const registerKindKey = projRow?.Kind || opt?.kind || "";
+  const pathKnown = !!kindV2Of(registerKindKey);
+  const kindKey = kindOverride || registerKindKey;
   const kind = kindV2Of(kindKey);
   const pathB = kind?.path === "B";
   const clientId = projRow?.["Client ID"] || "";
   const dealId = projRow?.["Source Deal ID"] || "";
-  const allocatable = v2Configured && P_RE.test(pid);
+  /* allocatable = this project can parent identifiers at all. canIssue adds the
+     person: both must hold before any button that writes is offered. */
+  const allocatable = v2Configured && P_RE.test(pid) && pathKnown;
+  const canIssue = allocatable && isRegistrar;
+  const whyNot = !v2Configured
+    ? "The v2 registrar is not configured in this deployment."
+    : !P_RE.test(pid)
+      ? "Only EB-P-YY-nnnn projects can parent v2 identifiers (Law 6)."
+      : !pathKnown
+        ? "The Kind column is empty in the register, so the path is unknown — fill it in the register before any identifier is issued (§6.3)."
+        : !isRegistrar
+          ? "You do not hold the registrar role, so the proxy would refuse this write."
+          : "";
+  /* Provisioning a folder and recording a delivered quantity are writes too,
+     but they issue nothing — they are gated on the role alone, never on the
+     path, so a missing Kind column cannot strand an existing row's folder. */
+  const roleWhyNot = isRegistrar ? "" : "You do not hold the registrar role, so the proxy would refuse this write.";
 
   const boards = useMemo(() => rowsOf("PCB").filter((r) => r["Project ID"]?.toUpperCase() === pid.toUpperCase()), [rowsOf, pid]);
   const masterRows = useMemo(() => rowsOf("Master").filter((r) => r["Project ID"]?.toUpperCase() === pid.toUpperCase()), [rowsOf, pid]);
   /* Rule 7.0 boards live only in the Master row — they were never re-minted. */
   const attached = useMemo(() => {
-    const own = new Set(boards.map((b) => b["PCB ID"].toUpperCase()));
+    /* A register is a spreadsheet: a column can be absent and a cell can be
+       blank, and an unguarded .toUpperCase() here white-screens the page. */
+    const own = new Set(boards.map((b) => String(b["PCB ID"] || "").toUpperCase()));
     const all = rowsOf("PCB");
     return [...new Set(masterRows.map((m) => m["PCB ID"]).filter((x) => x && !own.has(x.toUpperCase())))]
-      .map((id) => all.find((b) => b["PCB ID"].toUpperCase() === id.toUpperCase()) || { "PCB ID": id, "Name / Alias": "(not on the PCB tab)" });
+      .map((id) => all.find((b) => String(b["PCB ID"] || "").toUpperCase() === id.toUpperCase()) || { "PCB ID": id, "Name / Alias": "(not on the PCB tab)" });
   }, [boards, masterRows, rowsOf]);
   const allBoardIds = useMemo(() => [...boards, ...attached].map((b) => b["PCB ID"]).filter(Boolean), [boards, attached]);
   const boms = useMemo(() => {
@@ -220,7 +275,17 @@ export default function SetupV2Module({ focusProjectId }) {
   /* ── shared plumbing for every write ───────────────────────────────────── */
   const record = useCallback(async (identifier, family, state, extra) => {
     try { await v2RecordProvisioning(identifier, family, state, extra || {}); }
-    catch { toast(`${identifier} is in the register; the workflow database did not record it${live ? "" : " (demo mode)"}`, "amber"); }
+    catch (e) {
+      /* The workflow DB is a mirror; a failure here never invalidates the
+         register row. But swallowing the reason is how a CHECK violation
+         stayed invisible — so always log it, and toast anything that is not
+         the expected demo-mode refusal. */
+      const msg = e?.message || String(e);
+      console.warn(`record_id_provisioning(${identifier}, ${family}, ${state}) failed: ${msg}`);
+      if (live && !/demo mode/i.test(msg)) {
+        toast(`${identifier} is in the register; the workflow database refused the “${state}” record: ${msg}`, "amber");
+      }
+    }
   }, [v2RecordProvisioning, toast, live]);
 
   const provision = useCallback(async (family, id) => {
@@ -229,10 +294,10 @@ export default function SetupV2Module({ focusProjectId }) {
     setProg("");
     if (p.ok) {
       toast(`${id} folder ready — ${p.copied} files, ${p.folders} folders`, "green");
-      await record(id, family, "linked", { folderUrl: p.folderUrl });
+      await record(id, family, PROV.linked, { folderUrl: p.folderUrl });
     } else {
       toast(`${id} has its register row; the folder failed: ${p.error}`, "amber");
-      await record(id, family, "error", { error: p.error });
+      await record(id, family, PROV.failed, { error: p.error });
     }
     return p;
   }, [toast, record]);
@@ -255,11 +320,14 @@ export default function SetupV2Module({ focusProjectId }) {
       } });
       if (!a.ok) throw new Error(a.error);
       toast(`${a.id} allocated on the PCB tab`, "green");
-      await record(a.id, "PCB", "row", {});
+      await record(a.id, "PCB", PROV.row, {});
 
       /* BOM-001 is not a choice — the as-designed revision exists the moment
-         the board does, or the board's cost has nowhere to live. */
-      const b = await v2Allocate({ family: "BOM", parent: a.id, by, fields: { "Revision Reason": "As designed" } });
+         the board does, or the board's cost has nowhere to live. `parent` only
+         supplies the id stem; the backend fills cells from `fields`, so the
+         PCB ID has to be named there too or the row lands with an empty
+         board column and the per-board revision list silently breaks. */
+      const b = await v2Allocate({ family: "BOM", parent: a.id, by, fields: { "PCB ID": a.id, "Revision Reason": "As designed" } });
       if (b.ok) toast(`${b.id} — the as-designed revision`, "green");
       else toast(`${a.id} exists but BOM-001 failed: ${b.error} — allocate it from BOM revisions`, "amber");
 
@@ -310,7 +378,7 @@ export default function SetupV2Module({ focusProjectId }) {
       const a = await v2Allocate({ family: "FW", by, fields: { "PCB ID": fwF.pcb, "Project ID": pid, "Platform": fwF.platform.trim() } });
       if (!a.ok) throw new Error(a.error);
       toast(`${a.id} allocated on the FW tab`, "green");
-      await record(a.id, "FW", "row", {});
+      await record(a.id, "FW", PROV.row, {});
 
       /* The repo name is derived from the id we have just been given, so it
          can only be written back a beat later. */
@@ -338,7 +406,7 @@ export default function SetupV2Module({ focusProjectId }) {
       const a = await v2Allocate({ family: "ED", by, fields: { "Project ID": pid, "Name": edF.name.trim(), "Material": edF.material.trim() } });
       if (!a.ok) throw new Error(a.error);
       toast(`${a.id} allocated on the Enclosure tab`, "green");
-      await record(a.id, "ED", "row", {});
+      await record(a.id, "ED", PROV.row, {});
       await provision("ED", a.id);
       setEdF({ name: "", material: "" });
       await load();
@@ -353,7 +421,9 @@ export default function SetupV2Module({ focusProjectId }) {
   const addBom = async () => {
     setBusy("bom");
     try {
-      const a = await v2Allocate({ family: "BOM", parent: bomF.pcb, by, fields: { "Revision Reason": bomF.reason.trim() } });
+      /* `parent` is the id stem only — the backend writes cells from `fields`,
+         so the board has to be named there or the revision is orphaned. */
+      const a = await v2Allocate({ family: "BOM", parent: bomF.pcb, by, fields: { "PCB ID": bomF.pcb, "Revision Reason": bomF.reason.trim() } });
       if (!a.ok) throw new Error(a.error);
       toast(`${a.id} — ${bomF.reason.trim()}`, "green");
       setBomF({ pcb: "", reason: "" });
@@ -378,13 +448,21 @@ export default function SetupV2Module({ focusProjectId }) {
     : !mF.parent ? "Law 9: exactly one PARENT board per run — say which board this run is for; the rest ride along."
     : "";
 
+  /* One click mints an identifier that carries the ordered quantity forever —
+     Law 8 forbids correcting it, so a typo here is uncorrectable. The button
+     arms first and allocates second, echoing the number back. The armed value
+     is the exact run being confirmed, so changing anything disarms it. */
+  const [armedRun, setArmedRun] = useState("");
+  const runSig = `${qtyN}|${mF.parent}|${mF.boards.join(",")}|${mF.stage}|${mF.type}`;
+  const runArmed = !runProblem && armedRun === runSig;
+
   const addRun = async () => {
     setBusy("mfg");
     try {
       const a = await v2Allocate({ family: "MFG", parent: pid, qty: qtyN, by, fields: { "Project ID": pid, "Ordered Qty": qtyN } });
       if (!a.ok) throw new Error(a.error);
       toast(`${a.id} — ${qtyN} units, frozen in the id`, "green");
-      await record(a.id, "MFG", "row", {});
+      await record(a.id, "MFG", PROV.row, {});
 
       const u = await v2Update("MFG", a.id, {
         "Boards in this run": mF.boards.join(", "), "PARENT board": mF.parent,
@@ -396,9 +474,10 @@ export default function SetupV2Module({ focusProjectId }) {
       setProg("building the run folder…");
       const p = await v2ProvisionRun({ mfgId: a.id });
       setProg("");
-      if (p.ok) { toast(`Run folder ready — ${p.boards} board sub-folder${p.boards === 1 ? "" : "s"}`, "green"); await record(a.id, "MFG", "linked", { folderUrl: p.folderUrl }); }
-      else { toast(`${a.id} is in the register; the run folder failed: ${p.error}`, "amber"); await record(a.id, "MFG", "error", { error: p.error }); }
+      if (p.ok) { toast(`Run folder ready — ${p.boards} board sub-folder${p.boards === 1 ? "" : "s"}`, "green"); await record(a.id, "MFG", PROV.linked, { folderUrl: p.folderUrl }); }
+      else { toast(`${a.id} is in the register; the run folder failed: ${p.error}`, "amber"); await record(a.id, "MFG", PROV.failed, { error: p.error }); }
 
+      setArmedRun("");
       setMF({ stage: BUILD_STAGES[0], type: MFG_TYPES[0], qty: "", boards: [], parent: "" });
       await load();
     } catch (e) {
@@ -477,6 +556,12 @@ export default function SetupV2Module({ focusProjectId }) {
   };
 
   /* ── render ────────────────────────────────────────────────────────────── */
+  /* Path A panels are closed in two cases now: Path B (the client's design) and
+     an unknown path (the register never said). The second used to fall through
+     to Path A, which is how an MFG project could be handed PCB identifiers. */
+  const pathALocked = pathB || !pathKnown;
+  const unknownSub = "The register's Kind column is empty, so the path is unknown — this panel refuses rather than guess Path A (§6.3).";
+
   const head = (
     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
       <select className="inp" style={{ maxWidth: 460, flex: 1, minWidth: 240 }} value={pid} onChange={(e) => { setPid(e.target.value); setKindOverride(""); }}>
@@ -531,9 +616,9 @@ export default function SetupV2Module({ focusProjectId }) {
         <>
           {/* 1 — the path banner */}
           <Section style={{ borderColor: pathB ? "var(--coral)" : "var(--bdr)" }}>
-            <SectionTitle icon={kind ? (pathB ? Factory : CircuitBoard) : AlertTriangle} right={
+            <SectionTitle icon={pathKnown ? (pathB ? Factory : CircuitBoard) : AlertTriangle} right={
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                {kind && <Pill color={pathB ? "var(--coral)" : "var(--blue)"}>Path {kind.path}</Pill>}
+                {kind && <Pill color={!pathKnown ? "var(--amber)" : pathB ? "var(--coral)" : "var(--blue)"}>Path {kind.path}{pathKnown ? "" : " — preview only"}</Pill>}
                 <FolderLink url={projRow?.["Drive Folder Link"]} />
               </div>
             }>
@@ -547,11 +632,14 @@ export default function SetupV2Module({ focusProjectId }) {
               <KV k="Project manager" v={projRow?.["Project Manager"] || "—"} />
             </div>
 
-            {!kind ? (
+            {!pathKnown ? (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <Note>
-                  The register's <b>Kind</b> column is empty for this project, so the path cannot be derived. Pick it here to
-                  shape this page — this choice is <b>not</b> written anywhere; correct the Kind column in the register itself.
+                <Note tone="red" icon={ShieldAlert}>
+                  <b>The register's Kind column is empty for this project, so nothing can be issued here.</b> Without a kind the
+                  path cannot be derived, and defaulting to Path A would let this page mint PCB / BOM / FW / ED identifiers for
+                  what may be an <b>MFG or SCS</b> project — precisely what SOP §6.3 forbids. <b>Fill the Kind column in the
+                  register</b> (then re-read) and every panel below unlocks itself. The chips are a reading aid only: they shape
+                  what this page explains, they are written nowhere, and they do <b>not</b> unlock allocation.
                 </Note>
                 <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                   {V2_KINDS.map((k) => <button key={k.k} style={chipS(kindOverride === k.k)} onClick={() => setKindOverride(k.k)}>{k.k} · Path {k.path}</button>)}
@@ -570,6 +658,27 @@ export default function SetupV2Module({ focusProjectId }) {
                 <b> MFG</b> (each run). Every one of them is a register row first and a folder second.
               </Note>
             )}
+
+            {/* Said once, here, rather than as a surprise after every click:
+                allocation is role-checked in the proxy, so a PM without the
+                registrar role would only ever collect refusals. */}
+            {!isRegistrar ? (
+              <div style={{ marginTop: 8 }}>
+                <Note tone="amber" icon={ShieldAlert}>
+                  <b>You do not hold the registrar role.</b> Every allocate, Master and governance button on this page is a
+                  server-checked write, so the proxy would refuse them — they are disabled here rather than left to fail after
+                  the click. Ask a registrar to issue these identifiers, or have the role granted to you.
+                </Note>
+              </div>
+            ) : rolesUnknown ? (
+              <div style={{ marginTop: 8 }}>
+                <Note tone="amber" icon={ShieldAlert}>
+                  <b>Your roles could not be read</b>, so nothing is disabled on that account — unknown is not the same as
+                  "holds nothing". Issuing is still checked against the <b>registrar</b> role server-side, so a button that
+                  looks available here may still be refused by the proxy.
+                </Note>
+              </div>
+            ) : null}
           </Section>
 
           {/* link debt, held above everything else */}
@@ -586,7 +695,7 @@ export default function SetupV2Module({ focusProjectId }) {
                   <span key="w" style={{ color: "var(--txt2)" }}>{d.why}</span>,
                   d.fam === "Project"
                     ? <Pill key="b" color="var(--amber)">provision from the conversion page</Pill>
-                    : <Btn key="b" small kind="ghost" icon={FolderTree} disabled={!!busy}
+                    : <Btn key="b" small kind="ghost" icon={FolderTree} title={roleWhyNot} disabled={!!busy || !isRegistrar}
                       onClick={async () => {
                         setBusy("debt-" + d.id);
                         try {
@@ -594,7 +703,7 @@ export default function SetupV2Module({ focusProjectId }) {
                             const p = await v2ProvisionRun({ mfgId: d.id });
                             if (!p.ok) throw new Error(p.error);
                             toast(`${d.id} run folder ready`, "green");
-                            await record(d.id, "MFG", "linked", { folderUrl: p.folderUrl });
+                            await record(d.id, "MFG", PROV.linked, { folderUrl: p.folderUrl });
                           } else {
                             const p = await provision(d.fam, d.id);
                             if (!p.ok) throw new Error(p.error);
@@ -609,8 +718,8 @@ export default function SetupV2Module({ focusProjectId }) {
 
           {/* 2 — add a board */}
           <Panel icon={CircuitBoard} title="Add a board — PCB, then BOM-001, then the folder"
-            sub={pathB ? "Path B: the board is the client's; nothing to mint (§6.3)." : "Steps 11–14: allocate the PCB ID, mint its as-designed BOM, copy the engineering blueprint."}
-            open={open.board} onToggle={() => toggle("board")} disabled={pathB}
+            sub={!pathKnown ? unknownSub : pathB ? "Path B: the board is the client's; nothing to mint (§6.3)." : "Steps 11–14: allocate the PCB ID, mint its as-designed BOM, copy the engineering blueprint."}
+            open={open.board} onToggle={() => toggle("board")} disabled={pathALocked}
             right={<Pill color="var(--blue)">{boards.length} board{boards.length === 1 ? "" : "s"}</Pill>}>
             <LawStrip step={0} note="the allocator's append IS the row" />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
@@ -623,7 +732,7 @@ export default function SetupV2Module({ focusProjectId }) {
               <Field label="Legacy SKU code" hint="if it had one"><input className="inp" value={bF.legacy} onChange={(e) => setBF({ ...bF, legacy: e.target.value })} /></Field>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn icon={Plus} onClick={addBoard} disabled={!allocatable || !!busy || !bF.name.trim()}>{busy === "board" ? "Allocating…" : "Allocate PCB + BOM-001 + folder"}</Btn>
+              <Btn icon={Plus} onClick={addBoard} title={whyNot} disabled={!canIssue || !!busy || !bF.name.trim()}>{busy === "board" ? "Allocating…" : "Allocate PCB + BOM-001 + folder"}</Btn>
               {busy === "board" && <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> {prog || "writing the register row…"}</span>}
             </div>
 
@@ -655,8 +764,8 @@ export default function SetupV2Module({ focusProjectId }) {
 
           {/* 3 — attach an existing board */}
           <Panel icon={Layers} title="Attach an existing board — rule 7.0, no new PCB ID"
-            sub={pathB ? "Path B: boards arrive as deal inputs, not as attachments." : "The board is unchanged, so its identifier is unchanged. What this project needs is its own firmware identity."}
-            open={open.attach} onToggle={() => toggle("attach")} disabled={pathB}
+            sub={!pathKnown ? unknownSub : pathB ? "Path B: boards arrive as deal inputs, not as attachments." : "The board is unchanged, so its identifier is unchanged. What this project needs is its own firmware identity."}
+            open={open.attach} onToggle={() => toggle("attach")} disabled={pathALocked}
             right={attached.length ? <Pill color="var(--purple)">{attached.length} attached</Pill> : null}>
             <Note tone="purple" icon={Info}>
               Rule 7.0: <b>a board reused on another project gives Project + FW — never a second PCB ID.</b> Re-minting it would
@@ -672,7 +781,7 @@ export default function SetupV2Module({ focusProjectId }) {
                   ))}
                 </select>
               </Field>
-              <Btn icon={Link2} onClick={attachBoard} disabled={!allocatable || !!busy || !attachId}>{busy === "attach" ? "Recording…" : "Record against this project"}</Btn>
+              <Btn icon={Link2} onClick={attachBoard} title={whyNot} disabled={!canIssue || !!busy || !attachId}>{busy === "attach" ? "Recording…" : "Record against this project"}</Btn>
             </div>
             {attached.length > 0 && (
               <Rows cols={[{ k: "Attached board", w: "1.5fr" }, { k: "Name", w: "1.4fr" }, { k: "Firmware for this project", w: "1.4fr" }]}
@@ -680,8 +789,8 @@ export default function SetupV2Module({ focusProjectId }) {
                 items={attached.map((b) => [
                   <Id key="i" v={b["PCB ID"]} color="var(--purple)" />,
                   <span key="n">{b["Name / Alias"] || "—"}</span>,
-                  fws.some((f) => f["PCB ID"]?.toUpperCase() === b["PCB ID"].toUpperCase())
-                    ? <Done key="d" s={fws.find((f) => f["PCB ID"]?.toUpperCase() === b["PCB ID"].toUpperCase())["FW ID"]} />
+                  fws.some((f) => f["PCB ID"]?.toUpperCase() === String(b["PCB ID"] || "").toUpperCase())
+                    ? <Done key="d" s={fws.find((f) => f["PCB ID"]?.toUpperCase() === String(b["PCB ID"] || "").toUpperCase())["FW ID"]} />
                     : <Pill key="d" color="var(--amber)">firmware identity pending</Pill>,
                 ])} />
             )}
@@ -689,8 +798,8 @@ export default function SetupV2Module({ focusProjectId }) {
 
           {/* 4 — firmware */}
           <Panel icon={Cpu} title="Add firmware — one identity per board, per project"
-            sub={pathB ? "Path B: the client's firmware; Elecbits issues no FW identifier (§6.3)." : "The FW ID names the repo; the Logic Sheet is signed off before a line of it is written."}
-            open={open.fw} onToggle={() => toggle("fw")} disabled={pathB}
+            sub={!pathKnown ? unknownSub : pathB ? "Path B: the client's firmware; Elecbits issues no FW identifier (§6.3)." : "The FW ID names the repo; the Logic Sheet is signed off before a line of it is written."}
+            open={open.fw} onToggle={() => toggle("fw")} disabled={pathALocked}
             right={<Pill color="var(--blue)">{fws.length} firmware</Pill>}>
             <LawStrip step={0} note="repo name is derived from the id, so it is written back after allocation" />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
@@ -708,7 +817,7 @@ export default function SetupV2Module({ focusProjectId }) {
               identifier now; do not start the build until the sheet is signed.
             </Note>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn icon={Plus} onClick={addFirmware} disabled={!allocatable || !!busy || !fwF.pcb}>{busy === "fw" ? "Allocating…" : "Allocate FW + folder"}</Btn>
+              <Btn icon={Plus} onClick={addFirmware} title={whyNot} disabled={!canIssue || !!busy || !fwF.pcb}>{busy === "fw" ? "Allocating…" : "Allocate FW + folder"}</Btn>
               {busy === "fw" && <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> {prog || "writing the register row…"}</span>}
             </div>
 
@@ -744,8 +853,8 @@ export default function SetupV2Module({ focusProjectId }) {
 
           {/* 5 — enclosure */}
           <Panel icon={Box} title="Add an enclosure"
-            sub={pathB ? "Path B: the enclosure is the client's design too (§6.3)." : "One ED identifier per enclosure design, with its own blueprint folder."}
-            open={open.ed} onToggle={() => toggle("ed")} disabled={pathB}
+            sub={!pathKnown ? unknownSub : pathB ? "Path B: the enclosure is the client's design too (§6.3)." : "One ED identifier per enclosure design, with its own blueprint folder."}
+            open={open.ed} onToggle={() => toggle("ed")} disabled={pathALocked}
             right={<Pill color="var(--blue)">{eds.length}</Pill>}>
             <LawStrip step={0} />
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
@@ -753,7 +862,7 @@ export default function SetupV2Module({ focusProjectId }) {
               <Field label="Material"><input className="inp" value={edF.material} onChange={(e) => setEdF({ ...edF, material: e.target.value })} placeholder="e.g. ABS, 3D printed" /></Field>
             </div>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn icon={Plus} onClick={addEnclosure} disabled={!allocatable || !!busy || !edF.name.trim()}>{busy === "ed" ? "Allocating…" : "Allocate ED + folder"}</Btn>
+              <Btn icon={Plus} onClick={addEnclosure} title={whyNot} disabled={!canIssue || !!busy || !edF.name.trim()}>{busy === "ed" ? "Allocating…" : "Allocate ED + folder"}</Btn>
               {busy === "ed" && <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> {prog || "writing the register row…"}</span>}
             </div>
             <Rows cols={[{ k: "Enclosure ID", w: "1.5fr" }, { k: "Name", w: "1.5fr" }, { k: "Material", w: "1fr" }, { k: "", w: "auto" }]}
@@ -768,8 +877,8 @@ export default function SetupV2Module({ focusProjectId }) {
 
           {/* 6 — BOM revisions */}
           <Panel icon={ClipboardList} title="BOM revisions — every substitution is a revision"
-            sub={pathB ? "Path B: a client re-issued BOM is a new deal input (rule 15.0), not a BOM revision here." : "Rule 9.0: parts substituted gives a BOM. The board keeps its identifier; the bill does not."}
-            open={open.bom} onToggle={() => toggle("bom")} disabled={pathB}
+            sub={!pathKnown ? unknownSub : pathB ? "Path B: a client re-issued BOM is a new deal input (rule 15.0), not a BOM revision here." : "Rule 9.0: parts substituted gives a BOM. The board keeps its identifier; the bill does not."}
+            open={open.bom} onToggle={() => toggle("bom")} disabled={pathALocked}
             right={<Pill color="var(--blue)">{boms.length}</Pill>}>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr auto", gap: 10, alignItems: "end" }}>
               <Field label="Board" req>
@@ -781,7 +890,7 @@ export default function SetupV2Module({ focusProjectId }) {
               <Field label="Revision reason" req hint="why this bill differs">
                 <input className="inp" value={bomF.reason} onChange={(e) => setBomF({ ...bomF, reason: e.target.value })} placeholder="e.g. LDO substituted — original EOL" />
               </Field>
-              <Btn icon={Plus} onClick={addBom} disabled={!allocatable || !!busy || !bomF.pcb || !bomF.reason.trim()}>{busy === "bom" ? "Allocating…" : "New BOM revision"}</Btn>
+              <Btn icon={Plus} onClick={addBom} title={whyNot} disabled={!canIssue || !!busy || !bomF.pcb || !bomF.reason.trim()}>{busy === "bom" ? "Allocating…" : "New BOM revision"}</Btn>
             </div>
             <Rows cols={[{ k: "BOM ID", w: "1.8fr" }, { k: "Board", w: "1.3fr" }, { k: "Revision reason", w: "2fr" }, { k: "Costed", w: "0.7fr" }]}
               empty="No BOM revisions — a board without BOM-001 is a board nobody can cost."
@@ -835,9 +944,20 @@ export default function SetupV2Module({ focusProjectId }) {
             {!runProblem && <div style={{ fontSize: 12, color: "var(--txt2)" }}>Will allocate <Id v={`${pid}-MFG-nnn-${qtyN}`} /> — the serial comes from the register, the quantity from you.</div>}
 
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn icon={Plus} onClick={addRun} disabled={!allocatable || !!busy || !!runProblem}>{busy === "mfg" ? "Allocating…" : "Allocate the run + folder"}</Btn>
+              <Btn icon={Plus} title={whyNot} disabled={!canIssue || !!busy || !!runProblem}
+                onClick={() => (runArmed ? addRun() : setArmedRun(runSig))}>
+                {busy === "mfg" ? "Allocating…" : runArmed ? `Confirm ${qtyN} units — this quantity is permanent` : "Allocate the run + folder"}
+              </Btn>
+              {runArmed && !busy && <Btn small kind="ghost" onClick={() => setArmedRun("")}>Cancel</Btn>}
               {busy === "mfg" && <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--txt2)" }}><TypingDots /> {prog || "writing the register row…"}</span>}
             </div>
+            {runArmed && !busy && (
+              <Note tone="amber">
+                <b>{qtyN}</b> units will be welded into <Id v={`${pid}-MFG-nnn-${qtyN}`} size={11.5} />. Law 8 forbids correcting
+                an ordered quantity afterwards — a short ship is recorded in the Delivered column, never by re-issuing the id.
+                Check the number, then confirm.
+              </Note>
+            )}
 
             <Rows cols={[{ k: "MFG ID", w: "2fr" }, { k: "Stage / type", w: "1.3fr" }, { k: "Parent board", w: "1.3fr" }, { k: "Ordered → delivered", w: "1.8fr" }, { k: "", w: "auto" }]}
               empty="No runs on this project yet."
@@ -859,7 +979,7 @@ export default function SetupV2Module({ focusProjectId }) {
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       <input className="inp" style={{ width: 96, padding: "5px 9px", fontSize: 12 }} inputMode="numeric" placeholder="delivered"
                         value={d.qty ?? ""} onChange={(e) => setDel(id, { qty: e.target.value.replace(/[^\d]/g, ""), asked: false, confirmed: false })} />
-                      <Btn small kind="ghost" disabled={!!busy || !(d.qty ?? "").length} onClick={() => saveDelivered(m)}>{busy === "del-" + id ? "Saving…" : "Record"}</Btn>
+                      <Btn small kind="ghost" title={roleWhyNot} disabled={!!busy || !isRegistrar || !(d.qty ?? "").length} onClick={() => saveDelivered(m)}>{busy === "del-" + id ? "Saving…" : "Record"}</Btn>
                     </div>
                     {d.asked && (
                       <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
@@ -940,7 +1060,7 @@ export default function SetupV2Module({ focusProjectId }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 11.5, color: "var(--txt2)", lineHeight: 1.6, fontStyle: "italic" }}>“{govLine}”</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Btn icon={Sparkles} onClick={writeGovernance} disabled={!allocatable || !!busy}>{busy === "gov" ? "Writing…" : "Record this call in 00-Governance"}</Btn>
+                  <Btn icon={Sparkles} onClick={writeGovernance} title={whyNot} disabled={!canIssue || !!busy}>{busy === "gov" ? "Writing…" : "Record this call in 00-Governance"}</Btn>
                   <Btn kind="ghost" small icon={Copy} onClick={() => copy(govLine, "Decision line")}>Copy the line</Btn>
                 </div>
                 <Note tone="blue" icon={Info}>An unrecorded judgement is a judgement someone re-litigates in six months. The line is appended, dated and attributed to <b>{by}</b>.</Note>
@@ -995,7 +1115,7 @@ export default function SetupV2Module({ focusProjectId }) {
             </div>
             <Field label="Notes"><input className="inp" value={mm.notes} onChange={(e) => setMm({ ...mm, notes: e.target.value })} placeholder="anything the columns cannot say" /></Field>
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-              <Btn icon={Link2} onClick={writeMaster} disabled={!allocatable || !!busy || !mm.rule}>{busy === "master" ? "Writing…" : "Write the Master row"}</Btn>
+              <Btn icon={Link2} onClick={writeMaster} title={whyNot} disabled={!canIssue || !!busy || !mm.rule}>{busy === "master" ? "Writing…" : "Write the Master row"}</Btn>
               {!mm.rule && <span style={{ fontSize: 11.5, color: "var(--txt2)" }}>Pick the rule — a Master row without one records a fact but not its reason.</span>}
             </div>
 

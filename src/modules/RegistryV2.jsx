@@ -17,7 +17,7 @@
    (SOP §5.4), because a serial counted off an example row is a serial that
    collides the moment someone deletes it.                                   */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Database, Search, ExternalLink, ShieldCheck, ShieldAlert, Copy, MapPin, CheckCircle2,
   AlertTriangle, Stethoscope, Truck, Plus, BookOpen, ChevronDown, ChevronRight, Link2,
@@ -83,7 +83,7 @@ const Seam = ({ children }) => (
 );
 
 /* ═══ 1. Cutover ═══════════════════════════════════════════════════════════ */
-function CutoverPanel({ val, setVal }) {
+function CutoverPanel({ val, setVal, canIssue, whyNot }) {
   const { toast } = useUlm();
   const [open, setOpen] = useState(true);
   const [loc, setLoc] = useState(null);
@@ -206,11 +206,19 @@ function CutoverPanel({ val, setVal }) {
                 )}
               </div>
 
-              {/* ── validate ───────────────────────────────────────────── */}
+              {/* ── validate ─────────────────────────────────────────────
+                 Locate is a read and stays open to everyone, but v2.validate
+                 is in the proxy's REGISTRAR_ACTIONS — so a non-registrar who
+                 presses this gets a 403 dressed up as a red toast. Say it in
+                 the button instead of letting the server say it in a shout. */}
               <div>
-                <CardLabel right={<Btn small icon={CheckCircle2} onClick={validate} disabled={validating}>{validating ? "Validating…" : "Validate the register"}</Btn>}>
+                <CardLabel right={<Btn small icon={CheckCircle2} onClick={validate} disabled={validating || !canIssue} title={canIssue ? "" : whyNot}>{validating ? "Validating…" : "Validate the register"}</Btn>}>
                   Step 2 — prove it is ready
                 </CardLabel>
+                {/* Printed whether or not the button is disabled: when the roles
+                    could not be read this is a caveat on a live button, not a
+                    refusal — so it must not be hidden behind !canIssue. */}
+                {whyNot && <div style={{ fontSize: 12, color: "var(--amber)", fontWeight: 600, lineHeight: 1.7, marginBottom: 6 }}>{whyNot}</div>}
                 {validating && <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--txt2)" }}><TypingDots /> counting rows and looking for the blue example rows…</div>}
                 {!val && !validating && <div style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.7 }}>Nothing validated yet in this session. Validation counts the real rows per tab, flags format breaches, and lists the shipped worked-example rows that still have to go.</div>}
                 {val && (
@@ -277,17 +285,28 @@ function TabBrowser() {
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
 
+  /* Tabs can be switched while a read is still in the air. Without a token the
+     slower answer lands last and paints one tab's rows under another tab's
+     headers — which on a register console reads as data corruption. Only the
+     newest request is allowed to touch state; a stale one returns silently
+     (and leaves `loading` alone, because the newer read owns it now). */
+  const reqRef = useRef(0);
+
   const load = useCallback(async (t) => {
     if (!v2Configured) return;
+    const my = ++reqRef.current;
     setLoading(true); setErr("");
     try {
       const res = await v2List(t);
       if (!res.ok) throw new Error(res.error || "the register refused the read");
+      if (my !== reqRef.current) return;
       setData({ headers: res.headers || [], rows: res.rows || [], url: res.registerUrl || "" });
     } catch (e) {
+      if (my !== reqRef.current) return;
       setData(null); setErr(e.message);
       toast(`Could not read ${t}: ${e.message}`, "red");
     }
+    if (my !== reqRef.current) return;
     setLoading(false);
   }, [toast]);
 
@@ -510,24 +529,33 @@ function NewVendorModal({ onClose, onDone, by }) {
   );
 }
 
-function Vendors({ canIssue, whyNot, by }) {
+function Vendors({ canIssue, whyNot, roleNote, by }) {
   const { toast } = useUlm();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
   const [add, setAdd] = useState(false);
 
+  /* Same race as the tab browser: issuing an id fires a reload while the first
+     one may still be running, and the stale answer would hide the row that was
+     just written. Newest request wins. */
+  const reqRef = useRef(0);
+
   const load = useCallback(async () => {
     if (!v2Configured) return;
+    const my = ++reqRef.current;
     setLoading(true); setErr("");
     try {
       const res = await v2List("Vendors");
       if (!res.ok) throw new Error(res.error || "the register refused the read");
+      if (my !== reqRef.current) return;
       setData({ headers: res.headers || [], rows: res.rows || [], url: res.registerUrl || "" });
     } catch (e) {
+      if (my !== reqRef.current) return;
       setData(null); setErr(e.message);
       toast(`Could not read the Vendors tab: ${e.message}`, "red");
     }
+    if (my !== reqRef.current) return;
     setLoading(false);
   }, [toast]);
 
@@ -544,7 +572,7 @@ function Vendors({ canIssue, whyNot, by }) {
         right={
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {data?.url && <a href={data.url} target="_blank" rel="noreferrer" style={{ textDecoration: "none" }}><Pill color="var(--blue)">sheet <ExternalLink size={10} /></Pill></a>}
-            <Btn small icon={Plus} onClick={() => setAdd(true)} disabled={!canIssue} title={canIssue ? "" : whyNot}>Issue a vendor ID</Btn>
+            <Btn small icon={Plus} onClick={() => setAdd(true)} disabled={!canIssue} title={canIssue ? roleNote : whyNot}>Issue a vendor ID</Btn>
           </div>
         }
       >
@@ -554,6 +582,7 @@ function Vendors({ canIssue, whyNot, by }) {
       <div style={{ fontSize: 12, color: "var(--txt2)", lineHeight: 1.7, marginBottom: 12 }}>
         A manufacturing run is placed with a vendor, and SOP step 29 wants that vendor named by identifier — so this is the one issuance that lives on the register page rather than deep in a workflow.
         {!canIssue && whyNot && <> <span style={{ color: "var(--amber)", fontWeight: 600 }}>{whyNot}</span></>}
+        {canIssue && roleNote && <> <span style={{ color: "var(--amber)", fontWeight: 600 }}>{roleNote}</span></>}
       </div>
 
       {!v2Configured ? (
@@ -600,18 +629,22 @@ function Vendors({ canIssue, whyNot, by }) {
 }
 
 /* ═══ 5. Quick reference ═══════════════════════════════════════════════════ */
-function QuickReference() {
-  const Row = ({ label, note, grammar, eg, muted }) => (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(90px,1fr) minmax(180px,1.5fr) minmax(160px,1.4fr)", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--bdr)", alignItems: "center", opacity: muted ? 0.6 : 1 }}>
-      <div>
-        <div style={{ fontWeight: 700, fontSize: 12.5 }}>{label}</div>
-        {note && <div style={{ fontSize: 10.5, color: "var(--txt3)" }}>{note}</div>}
-      </div>
-      <code style={{ fontFamily: MONO, fontSize: 11.5, color: "var(--acc)" }}>{grammar}</code>
-      <code style={{ fontFamily: MONO, fontSize: 11.5, color: "var(--txt2)" }}>{eg}</code>
+/* Declared at module scope, not inside QuickReference: a component defined in
+   a render body is a brand-new type every render, so React would unmount and
+   remount the whole grammar table on any state change above it. It closes over
+   nothing, so there is no reason for it to live in there. */
+const GrammarRow = ({ label, note, grammar, eg, muted }) => (
+  <div style={{ display: "grid", gridTemplateColumns: "minmax(90px,1fr) minmax(180px,1.5fr) minmax(160px,1.4fr)", gap: 10, padding: "8px 0", borderBottom: "1px solid var(--bdr)", alignItems: "center", opacity: muted ? 0.6 : 1 }}>
+    <div>
+      <div style={{ fontWeight: 700, fontSize: 12.5 }}>{label}</div>
+      {note && <div style={{ fontSize: 10.5, color: "var(--txt3)" }}>{note}</div>}
     </div>
-  );
+    <code style={{ fontFamily: MONO, fontSize: 11.5, color: "var(--acc)" }}>{grammar}</code>
+    <code style={{ fontFamily: MONO, fontSize: 11.5, color: "var(--txt2)" }}>{eg}</code>
+  </div>
+);
 
+function QuickReference() {
   return (
     <Section>
       <SectionTitle icon={BookOpen}>The ID grammar</SectionTitle>
@@ -622,11 +655,11 @@ function QuickReference() {
         <span>Family</span><span>Grammar</span><span>Example</span>
       </div>
       {V2_FAMILIES.map((f) => (
-        <Row key={f.k} label={f.label} grammar={grammarOf(f.eg)} eg={f.eg} muted={f.readOnly}
+        <GrammarRow key={f.k} label={f.label} grammar={grammarOf(f.eg)} eg={f.eg} muted={f.readOnly}
           note={f.gated ? "only from a won deal" : f.readOnly ? "governed elsewhere" : `${f.tab} tab`} />
       ))}
       {V2_DERIVED.map((d) => (
-        <Row key={d.k} label={d.label} grammar={grammarOf(d.eg)} eg={d.eg} note={`under a ${d.parent}`} />
+        <GrammarRow key={d.k} label={d.label} grammar={grammarOf(d.eg)} eg={d.eg} note={`under a ${d.parent}`} />
       ))}
       <div style={{ fontSize: 11.5, color: "var(--txt3)", lineHeight: 1.7, marginTop: 10 }}>
         Project folders are named with the Project ID alone. A run freezes its ordered quantity in the id; what actually arrived lives in the <b>Delivered Qty</b> column. Ids beginning <code style={{ fontFamily: MONO }}>Eb-</code> predate the SOP, are exempt from the grammar, and are never re-numbered.
@@ -639,25 +672,47 @@ function QuickReference() {
 export default function RegistryV2Module() {
   const { live, people, me, v2Roles } = useUlm();
   const [val, setVal] = useState(null);
-  const [roles, setRoles] = useState(null);
+  /* Three states, and they are genuinely different things:
+       undefined → the lookup is still in flight
+       null      → v2Roles() could not read the roles at all
+       array     → the roles we know you hold (admins get the full list, because
+                   ulm.has_role() ORs is_admin server-side)
+     Collapsing "unknown" into "holds nothing" is the bug this replaces: it told
+     admins they were not registrars and disabled buttons with a false reason. */
+  const [roles, setRoles] = useState(undefined);
 
   useEffect(() => {
     let dead = false;
     (async () => {
-      try { const r = await v2Roles(); if (!dead) setRoles(r || []); }
-      catch { if (!dead) setRoles([]); }
+      try { const r = await v2Roles(); if (!dead) setRoles(Array.isArray(r) ? r : null); }
+      catch { if (!dead) setRoles(null); }
     })();
     return () => { dead = true; };
   }, [v2Roles]);
 
   const by = useMemo(() => people.find((p) => p.id === me)?.name || "", [people, me]);
-  const isRegistrar = !roles || roles.includes("registrar");
-  const canIssue = v2Configured && isRegistrar;
+
+  const rolesLoading = roles === undefined;
+  const rolesUnknown = roles === null;
+  const isRegistrar = Array.isArray(roles) && roles.includes("registrar");
+
+  /* The proxy is the real gate — it re-checks the role for every REGISTRAR
+     action — so "we could not read your roles" is a caveat, not a refusal:
+     leave the button live and let the server be the one to say no. Only a
+     definite "you do not hold it" disables, and only that names the role. */
+  const canIssue = v2Configured && !rolesLoading && (isRegistrar || rolesUnknown);
   const whyNot = !v2Configured
     ? "The v2 backend is not configured in this deployment."
-    : !isRegistrar
-      ? "You do not hold the registrar role, so the proxy would refuse this write."
-      : "";
+    : rolesLoading
+      ? "Checking your roles…"
+      : rolesUnknown
+        ? ""
+        : !isRegistrar
+          ? "You do not hold the registrar role, so the proxy would refuse this write."
+          : "";
+  /* Shown even when the action stays enabled — the user deserves to know the
+     portal is asking blind rather than vouching for them. */
+  const roleNote = !v2Configured || !rolesUnknown ? "" : "Your roles could not be read, so nothing here is pre-checked — the proxy will accept or refuse this on its own.";
 
   return (
     <div className="fade" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -667,10 +722,10 @@ export default function RegistryV2Module() {
         </Seam>
       )}
 
-      <CutoverPanel val={val} setVal={setVal} />
+      <CutoverPanel val={val} setVal={setVal} canIssue={canIssue} whyNot={whyNot || roleNote} />
       <TabBrowser />
       <HealthSweep />
-      <Vendors canIssue={canIssue} whyNot={whyNot} by={by} />
+      <Vendors canIssue={canIssue} whyNot={whyNot} roleNote={roleNote} by={by} />
       <QuickReference />
     </div>
   );

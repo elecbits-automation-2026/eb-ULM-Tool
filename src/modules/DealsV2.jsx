@@ -67,13 +67,21 @@ const LogView = ({ lines }) => (
 );
 
 /* A seam is never a blank screen — it is an amber sentence saying which half
-   of the system is missing and what still works without it. */
-const Seam = ({ children }) => (
-  <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 9, background: "color-mix(in srgb, var(--amber) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--amber) 35%, transparent)", fontSize: 12, lineHeight: 1.6, color: "var(--txt)" }}>
-    <AlertTriangle size={14} style={{ color: "var(--amber)", flexShrink: 0, marginTop: 2 }} />
+   of the system is missing and what still works without it. Tone goes red only
+   for a warning about something irreversible. */
+const Seam = ({ children, tone = "amber" }) => (
+  <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 12px", borderRadius: 9, background: `color-mix(in srgb, var(--${tone}) 10%, transparent)`, border: `1px solid color-mix(in srgb, var(--${tone}) 35%, transparent)`, fontSize: 12, lineHeight: 1.6, color: "var(--txt)" }}>
+    <AlertTriangle size={14} style={{ color: `var(--${tone})`, flexShrink: 0, marginTop: 2 }} />
     <span>{typeof children === "string" ? <MD t={children} /> : children}</span>
   </div>
 );
+
+/* v2Roles() returns null when the role table could not be read. Unknown is not
+   the same as "holds nothing": we let the press through and let the server
+   refuse it, rather than locking someone out of their own job on a read error. */
+const rolesUnknown = (roles) => roles === null || roles === undefined;
+const hasRole = (roles, r) => rolesUnknown(roles) || (roles || []).includes(r);
+const roleTitle = (roles, r, msg) => (rolesUnknown(roles) ? "your roles could not be read" : (roles || []).includes(r) ? "" : msg);
 
 /* ── TRIAGE — a sales request becomes a client + a deal, and nothing else ─── */
 function TriageModal({ req, onClose, onDone }) {
@@ -246,7 +254,7 @@ function TriageModal({ req, onClose, onDone }) {
 }
 
 /* ── DEAL INPUTS (stage 0.4) — what the client handed us, registered ─────── */
-function InputsPanel({ deal, by, push }) {
+function InputsPanel({ deal, roles, by, push }) {
   const { toast } = useUlm();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
@@ -278,9 +286,12 @@ function InputsPanel({ deal, by, push }) {
     setBusy(true);
     try {
       const res = await v2Allocate({
+        /* The top-level `type` only picks the id stem (…-PCB-001 / …-BOM-001);
+           the allocator writes columns from `fields` alone, so without this the
+           row's own Type cell came out blank and the board read it as neither. */
         family: "DEALINPUT", parent: deal.id, type: f.type, by,
         fields: {
-          "Deal ID": deal.id, "Client ID": deal.clientId,
+          "Deal ID": deal.id, "Client ID": deal.clientId, "Type": f.type,
           "Description": f.desc.trim(), "Received On": f.received,
           "Version as Received": f.version.trim(),
           "Linked PCB Input ID": f.type === "BOM" ? f.linked : "",
@@ -348,7 +359,12 @@ function InputsPanel({ deal, by, push }) {
               )}
             </Field>
           )}
-          <div><Btn small icon={Plus} onClick={register} disabled={busy || !ready || !v2Configured}>{busy ? "Registering…" : `Register ${f.type} input`}</Btn></div>
+          {/* Allocation is the registrar's act — say so before the click,
+              rather than letting the proxy answer 403 after it. */}
+          <div><Btn small icon={hasRole(roles, "registrar") ? Plus : Lock} onClick={register}
+                    disabled={busy || !ready || !v2Configured || !hasRole(roles, "registrar")}
+                    title={roleTitle(roles, "registrar", "Only the Registrar may allocate a deal-input ID — role: registrar")}>
+            {busy ? "Registering…" : `Register ${f.type} input`}</Btn></div>
         </div>
       </Section>
     </div>
@@ -356,18 +372,21 @@ function InputsPanel({ deal, by, push }) {
 }
 
 /* ── THE SANCTION GATE — six conditions, six roles, no shared ownership ───── */
-function GatePanel({ deal, roles, pathB, setPathB, gate, reloadGate, gateErr, push }) {
+function GatePanel({ deal, roles, kind, pathB, gate, reloadGate, gateErr, push }) {
   const { toast, v2ConfirmGate } = useUlm();
   const [ev, setEv] = useState({});
   const [busyN, setBusyN] = useState(null);
   const state = (n) => gate.find((g) => Number(g.condition_no) === n) || null;
   const closed = GATE_CONDITIONS.filter((c) => state(c.n)?.confirmed).length;
+  const kindInfo = kindV2Of(kind);
 
   const confirm = async (c) => {
     setBusyN(c.n);
     try {
+      /* Path B is a real column on the gate row now, not a sentence in a note —
+         so a later reader can reconcile which attestation was actually made. */
       const swapped = pathB && (c.n === 2 || c.n === 3);
-      await v2ConfirmGate(deal.id, c.n, ev[c.n] || "", swapped ? "Path B — client design-pack attestation" : null);
+      await v2ConfirmGate(deal.id, c.n, ev[c.n] || "", null, swapped);
       push?.(`Condition ${c.n} confirmed as **${c.who}**.`, "green");
       toast(`Condition ${c.n} closed`, "green");
       await reloadGate();
@@ -382,8 +401,14 @@ function GatePanel({ deal, roles, pathB, setPathB, gate, reloadGate, gateErr, pu
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <Pill color={closed === 6 ? "var(--green)" : "var(--amber)"} style={{ fontSize: 12 }}><ShieldCheck size={12} /> {closed}/6 closed</Pill>
-        <Seg options={[{ k: "A", label: "Path A — we design it" }, { k: "B", label: "Path B — client design" }]} value={pathB ? "B" : "A"} onChange={(k) => setPathB(k === "B")} />
-        <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>Path B swaps conditions 2 and 3 for the design-pack attestation.</span>
+        {/* The path is not a preference — it falls out of the project Kind chosen
+            on the Convert tab, so it is shown here, never toggled here. */}
+        <Pill color={pathB ? "var(--purple)" : "var(--blue)"}>Path {pathB ? "B" : "A"}{kindInfo ? ` — ${kindInfo.label}` : ""}</Pill>
+        <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>
+          {kindInfo
+            ? `The Kind (${kind}) decides the path. Path B swaps conditions 2 and 3 for the design-pack attestation.`
+            : "Pick the Kind on the Convert tab — it decides the path, and Path B swaps conditions 2 and 3 for the design-pack attestation."}
+        </span>
       </div>
 
       {!deal.linked && <Seam>{"This deal is in the register only. The gate lives in the database, so it cannot be confirmed until the deal is linked in ULM — use **Link this deal** at the top of this drawer."}</Seam>}
@@ -393,7 +418,7 @@ function GatePanel({ deal, roles, pathB, setPathB, gate, reloadGate, gateErr, pu
         {GATE_CONDITIONS.map((c) => {
           const st = state(c.n);
           const on = !!st?.confirmed;
-          const mine = roles.includes(c.role);
+          const mine = hasRole(roles, c.role);
           const swapped = pathB && c.pathB;
           return (
             <div key={c.n} className="card" style={{ padding: 13, borderColor: on ? "color-mix(in srgb, var(--green) 40%, transparent)" : "var(--bdr)" }}>
@@ -415,8 +440,10 @@ function GatePanel({ deal, roles, pathB, setPathB, gate, reloadGate, gateErr, pu
                 />
                 <Btn
                   small kind={on ? "ghost" : "green"} icon={mine ? CheckCircle2 : Lock}
-                  disabled={!mine || busyN === c.n}
-                  title={mine ? "" : `Only the ${c.who} may confirm this — role: ${c.role}`}
+                  /* The gate row carries a foreign key to the ULM deal link — an
+                     unlinked deal makes the insert fail raw, so refuse earlier. */
+                  disabled={!mine || !deal.linked || busyN === c.n}
+                  title={!deal.linked ? "Link this deal in ULM first" : roleTitle(roles, c.role, `Only the ${c.who} may confirm this — role: ${c.role}`)}
                   onClick={() => confirm(c)}
                 >
                   {busyN === c.n ? "Confirming…" : on ? "Re-confirm" : "Confirm"}
@@ -431,19 +458,22 @@ function GatePanel({ deal, roles, pathB, setPathB, gate, reloadGate, gateErr, pu
 }
 
 /* ── CONVERT — the one lawful door to an EB-P ─────────────────────────────── */
-function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
+function ConvertPanel({ deal, roles, gate, kind, setKind, pathB, onOpenProject, push, lines }) {
   const { people, me, toast, projects, v2ConvertDeal, v2RecordProvisioning } = useUlm();
   const by = people.find((p) => p.id === me)?.name || "";
   const closed = GATE_CONDITIONS.filter((c) => gate.find((g) => Number(g.condition_no) === c.n)?.confirmed).length;
   const status = deal.status;
-  const [f, setF] = useState({ name: deal.name || "", kind: "", pm: "", deadline: "", desc: "", llds: "" });
+  /* Kind lives in the drawer, not here — the gate tab reads the same choice, so
+     picking MFG/SCS swaps gate conditions 2 and 3 the moment it is picked. */
+  const [f, setF] = useState({ name: deal.name || "", pm: "", deadline: "", desc: "", llds: "" });
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState(deal.converted ? { projectId: deal.converted } : null);
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
 
   const pmPerson = people.find((p) => p.id === f.pm) || null;
+  const mayConvert = hasRole(roles, "registrar");
   const blocked = status !== "Won" ? "Rule 0.2 — only a WON deal converts." : closed < 6 ? `The gate is open — ${6 - closed} of 6 conditions unconfirmed.` : "";
-  const ready = !blocked && f.name.trim() && f.kind;
+  const ready = !blocked && f.name.trim() && kind;
 
   const projRowId = useMemo(() => {
     const pid = out?.projectId;
@@ -458,7 +488,7 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
     try {
       if (!projectId) {
         push(`Minting the Project ID in the register — the generic allocator refuses family **P**, so this is the only door.`);
-        const rc = await v2Convert(deal.id, { "Project Name": f.name.trim(), "Kind": f.kind, "Project Manager": pmPerson?.name || "" }, by);
+        const rc = await v2Convert(deal.id, { "Project Name": f.name.trim(), "Kind": kind, "Project Manager": pmPerson?.name || "" }, by);
         if (!rc.ok) throw new Error(rc.error);
         projectId = rc.projectId;
         setOut({ projectId, registerUrl: rc.registerUrl });
@@ -475,17 +505,22 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
     }
 
     let rowId = out?.rowId || null;
+    /* A folder is not a sanction. If the database half fails, the run continues
+       so the Drive work is not wasted — but the closing toast must not claim a
+       success the project record never got. */
+    let sanctioned = true;
     try {
       push("Creating and sanctioning the project in the database, and settling the sales request…");
       const row = await v2ConvertDeal({
-        dealId: deal.id, projectId, name: f.name.trim(), kindV2: f.kind,
+        dealId: deal.id, projectId, name: f.name.trim(), kindV2: kind,
         pm: f.pm || null, deadline: f.deadline || null, pathB, desc: f.desc || null,
       });
       const r = Array.isArray(row) ? row[0] : row;
       rowId = r?.id || null;
       setOut((o) => ({ ...(o || {}), projectId, rowId }));
-      push(`Sanctioned as **${kindV2Of(f.kind)?.label || f.kind}** — routed to ${kindV2Of(f.kind)?.tool || "the delivery tool"}.`, "green");
+      push(`Sanctioned as **${kindV2Of(kind)?.label || kind}** — routed to ${kindV2Of(kind)?.tool || "the delivery tool"}.`, "green");
     } catch (e) {
+      sanctioned = false;
       push(`The database half did not settle: ${e.message} — the register row stands; press Retry.`, "red");
       toast(`Sanction failed: ${e.message}`, "red");
     }
@@ -499,10 +534,11 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
       try { await v2RecordProvisioning(projectId, "P", "folder_created", { folderUrl: pv.folderUrl }); } catch (e) { push(`Provisioning state not recorded (folder_created): ${e.message}`, "amber"); }
       push(`Folder **${projectId}** ready — ${pv.copied ?? 0} files / ${pv.folders ?? 0} folders${pv.lldCopied ? `, ${pv.lldCopied} LLD${pv.lldCopied === 1 ? "" : "s"} filed` : ""}${pv.governance ? ", governance log seeded" : ""}.`, "green");
       try { await v2RecordProvisioning(projectId, "P", "link_written", { folderUrl: pv.folderUrl }); } catch (e) { push(`Provisioning state not recorded (link_written): ${e.message}`, "amber"); }
-      toast(`${projectId} converted and provisioned`, "green");
+      if (sanctioned) toast(`${projectId} converted and provisioned`, "green");
+      else toast(`${projectId} — the folder exists, but the database sanction did not settle; press Retry`, "amber");
     } catch (e) {
       try { await v2RecordProvisioning(projectId, "P", "failed", { error: e.message }); } catch { /* the log already says it */ }
-      push(`Provisioning failed: ${e.message} — **${projectId}** exists and is sanctioned; press Retry when Drive is back.`, "red");
+      push(`Provisioning failed: ${e.message} — **${projectId}** ${sanctioned ? "exists and is sanctioned" : "exists in the register, but the database sanction did not settle either"}; press Retry when Drive is back.`, "red");
       toast(`Provisioning failed: ${e.message}`, "red");
     }
     setBusy(false);
@@ -521,14 +557,21 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
         <Field label="Project name" req><input className="inp" value={f.name} onChange={(e) => set("name", e.target.value)} /></Field>
         <Field label="Deadline"><input className="inp" type="date" value={f.deadline} onChange={(e) => set("deadline", e.target.value)} /></Field>
       </div>
-      <Field label="Kind" req hint="decides the path and the delivery tool">
+      <Field label="Kind" req hint="decides the path and the delivery tool — and the gate's conditions 2 and 3">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
           {V2_KINDS.map((k) => (
-            <button key={k.k} style={chipS(f.kind === k.k)} onClick={() => set("kind", k.k)} title={k.hint}>
+            <button key={k.k} style={chipS(kind === k.k)} onClick={() => setKind(k.k)} title={k.hint}>
               {k.label} <span style={{ fontFamily: MONO, opacity: 0.6 }}>{k.k}</span> <span style={{ opacity: 0.6 }}>· path {k.path}</span>
             </button>
           ))}
         </div>
+        {kind && (
+          <div style={{ fontSize: 11.5, color: "var(--txt2)", marginTop: 6 }}>
+            <MD t={pathB
+              ? "**Path B** — the client owns the design, so gate conditions 2 and 3 are the design-pack attestations, and the conversion is recorded as Path B."
+              : "**Path A** — Elecbits designs it, so gate conditions 2 and 3 are the locked LLDs."} />
+          </div>
+        )}
       </Field>
       <Field label="Project manager" hint="one owner, recorded in the register and the database">
         <select className="inp" value={f.pm} onChange={(e) => set("pm", e.target.value)}>
@@ -540,7 +583,11 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
       <Field label="LLD links" hint="one URL per line — filed into the new folder"><textarea className="inp" rows={2} value={f.llds} onChange={(e) => set("llds", e.target.value)} placeholder="https://drive.google.com/…" /></Field>
 
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <Btn icon={Rocket} onClick={run} disabled={busy || !ready || !v2Configured}>
+        <Btn
+          icon={mayConvert ? Rocket : Lock} onClick={run}
+          disabled={busy || !ready || !v2Configured || !mayConvert}
+          title={roleTitle(roles, "registrar", "Only the Registrar may mint a Project ID — role: registrar")}
+        >
           {busy ? "Converting…" : out?.projectId ? "Retry — resume the conversion" : "Convert to a project"}
         </Btn>
         {busy && <TypingDots />}
@@ -556,19 +603,26 @@ function ConvertPanel({ deal, gate, pathB, onOpenProject, push, lines }) {
 
 /* ── the drawer ───────────────────────────────────────────────────────────── */
 function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject }) {
-  const { people, me, toast, v2GateState, v2SetDealStatus, v2TriageRequest } = useUlm();
+  const { people, me, toast, projects, v2GateState, v2SetDealStatus, v2TriageRequest } = useUlm();
   const by = people.find((p) => p.id === me)?.name || "";
   const [tab, setTab] = useState("status");
   const [lines, push] = useLog();
   const [gate, setGate] = useState([]);
   const [gateErr, setGateErr] = useState("");
-  const [pathB, setPathB] = useState(false);
+  /* One Kind, two tabs. The path is derived from it — never chosen separately —
+     so the gate a person confirms is the gate the conversion will record. */
+  /* An already-converted deal seeds its Kind from the project it minted, so the
+     gate tab shows the path that was actually recorded rather than a blank. */
+  const [kind, setKind] = useState(() => (deal.converted ? (projects.find((p) => p.projectId === deal.converted)?.kindV2 || "") : ""));
+  const pathB = kindV2Of(kind)?.path === "B";
   const [move, setMove] = useState("");          // status being moved to
   const [poRef, setPoRef] = useState(deal.poRef || "");
   const [reason, setReason] = useState("");
+  const [ackTerminal, setAckTerminal] = useState(false);  // the second step before a forever
   const [value, setValue] = useState(deal.value || "");
   const [busy, setBusy] = useState(false);
   const [revive, setRevive] = useState("");
+  const [revived, setRevived] = useState("");    // the new Deal ID, once minted
 
   const loadGate = useCallback(async () => {
     try { setGate(await v2GateState(deal.id)); setGateErr(""); }
@@ -577,11 +631,16 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
   useEffect(() => { loadGate(); }, [loadGate]);
 
   const closed = GATE_CONDITIONS.filter((c) => gate.find((g) => Number(g.condition_no) === c.n)?.confirmed).length;
-  const moves = legalMoves(deal.status);
+  /* A converted deal has spent itself: the ladder is over, and Lost/Dropped
+     after conversion would orphan a live project. */
+  const moves = deal.converted ? [] : legalMoves(deal.status);
   const terminal = DEAL_TERMINAL.includes(deal.status);
+  const convertedProj = deal.converted ? (projects.find((p) => p.projectId === deal.converted) || null) : null;
   const needsPo = move === "Won";
   const needsReason = DEAL_TERMINAL.includes(move);
-  const canMove = move && (!needsPo || poRef.trim()) && (!needsReason || reason.trim());
+  const mayMove = hasRole(roles, "deal_owner");
+  const mayAllocate = hasRole(roles, "registrar");
+  const canMove = move && (!needsPo || poRef.trim()) && (!needsReason || (reason.trim() && ackTerminal));
 
   /* One move, two ledgers: ulm.deal_links carries the decision, the register
      carries the same words so the sheet never lies. */
@@ -596,6 +655,10 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
       setBusy(false);
       return;
     }
+    /* Two ledgers, one move. A green toast may only be said when BOTH of them
+       carry it — otherwise the sheet still shows the old status and the person
+       walks away believing it does not. */
+    let mirrored = true;
     if (v2Configured) {
       try {
         const values = { "Status": move };
@@ -606,13 +669,16 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
         if (!res.ok) throw new Error(res.error);
         push(`Register mirrored — ${(res.changed || []).join(", ") || "no columns changed"}${(res.refused || []).length ? ` · refused: ${res.refused.join(", ")}` : ""}.`, "green");
       } catch (e) {
+        mirrored = false;
         push(`The register was not mirrored: ${e.message} — press the move again, it is idempotent.`, "red");
       }
     } else {
+      mirrored = false;
       push("The registrar backend is not configured — the Deals tab still says the old status.", "amber");
     }
-    toast(`${deal.id} → ${move}`, "green");
-    setMove(""); setReason("");
+    if (mirrored) toast(`${deal.id} → ${move}`, "green");
+    else toast(`${deal.id} → ${move} in ULM, but the register was not mirrored`, "amber");
+    setMove(""); setReason(""); setAckTerminal(false);
     await loadGate();
     onChanged?.();
     setBusy(false);
@@ -630,6 +696,9 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
         },
       });
       if (!res.ok) throw new Error(res.error);
+      /* A Deal ID is permanent. Latch the result so a second press cannot mint a
+         second one for the same revival — the same latch TriageModal uses. */
+      setRevived(res.id);
       push(`New deal **${res.id}** opened under ${deal.clientId}. The dead row stays exactly where it is.`, "green");
       toast(`${res.id} opened`, "green");
       onChanged?.();
@@ -687,7 +756,9 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
                   <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12.5 }}>
                     <span style={{ flex: 1, minWidth: 180, fontWeight: 600 }}>{r.title}</span>
                     <span style={{ color: "var(--txt3)", fontSize: 11.5 }}>{r.orgName || "—"}</span>
-                    <Btn small kind="ghost" icon={Link2} disabled={busy} onClick={() => linkTo(r)}>Link this deal</Btn>
+                    <Btn small kind="ghost" icon={mayAllocate ? Link2 : Lock} disabled={busy || !mayAllocate}
+                         title={roleTitle(roles, "registrar", "Only the Registrar may link a deal to a request — role: registrar")}
+                         onClick={() => linkTo(r)}>Link this deal</Btn>
                   </div>
                 ))}
               </div>
@@ -715,7 +786,22 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
               </div>
             </Section>
 
-            {terminal ? (
+            {deal.converted ? (
+              /* Converted is as final as terminal: the deal has become a project,
+                 and the ladder has nowhere left to go. */
+              <Section style={{ borderColor: "color-mix(in srgb, var(--green) 35%, transparent)" }}>
+                <CardLabel right={<Pill color="var(--green)"><Rocket size={11} /> converted</Pill>}>Rule 0.2 — spent</CardLabel>
+                <div style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.7, marginBottom: 12 }}>
+                  <MD t={`This deal was won and converted to **${deal.converted}**. It does not move again — not to Lost, not to Dropped: the project it minted is the record of what happened next. A further piece of work for this client takes a **new Deal ID** (rule 2.0).`} />
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <Pill color="var(--green)" style={{ fontFamily: MONO }}>{deal.converted}</Pill>
+                  {convertedProj
+                    ? <Btn small kind="ghost" icon={ArrowRight} onClick={() => onOpenProject?.(convertedProj.id)}>Open the project</Btn>
+                    : <span style={{ fontSize: 11.5, color: "var(--txt3)" }}>The project row is not in this session's data — refresh, or open it from the Projects page.</span>}
+                </div>
+              </Section>
+            ) : terminal ? (
               <Section style={{ borderColor: "color-mix(in srgb, var(--red) 35%, transparent)" }}>
                 <CardLabel right={<Pill color="var(--red)"><Ban size={11} /> terminal</Pill>}>Rule 0.4</CardLabel>
                 <div style={{ fontSize: 12.5, color: "var(--txt2)", lineHeight: 1.7, marginBottom: 12 }}>
@@ -725,7 +811,13 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
                   <div style={{ flex: 1, minWidth: 220 }}>
                     <Field label="New deal name"><input className="inp" value={revive} onChange={(e) => setRevive(e.target.value)} placeholder={`${deal.name || deal.id} — revived`} /></Field>
                   </div>
-                  <Btn small icon={Plus} onClick={reviveDeal} disabled={busy || !v2Configured}>{busy ? "Opening…" : `Revive as a new deal under ${deal.clientId}`}</Btn>
+                  <Btn
+                    small icon={revived ? CheckCircle2 : mayAllocate ? Plus : Lock} onClick={reviveDeal}
+                    disabled={busy || !v2Configured || !mayAllocate || !!revived}
+                    title={roleTitle(roles, "registrar", "Only the Registrar may allocate a Deal ID — role: registrar")}
+                  >
+                    {revived ? `Opened ${revived}` : busy ? "Opening…" : `Revive as a new deal under ${deal.clientId}`}
+                  </Btn>
                 </div>
               </Section>
             ) : (
@@ -740,7 +832,7 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
                         key={s.k}
                         disabled={!legal}
                         title={cur ? "where it stands now" : legal ? "" : "not a legal move from here"}
-                        onClick={() => { setMove(s.k); setReason(""); }}
+                        onClick={() => { setMove(s.k); setReason(""); setAckTerminal(false); }}
                         style={{ ...chipS(move === s.k), opacity: legal ? 1 : 0.4, cursor: legal ? "pointer" : "not-allowed", borderColor: cur ? s.c : undefined, color: move === s.k ? "var(--acc)" : cur ? s.c : "var(--txt)" }}
                       >
                         {cur ? "● " : ""}{s.k}
@@ -763,8 +855,25 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
                     <Field label="Deal value" hint="corrected in the column, never in the identifier">
                       <input className="inp" value={value} onChange={(e) => setValue(e.target.value)} />
                     </Field>
+                    {/* A forever needs two presses. The sentence says what cannot be
+                        undone, and the checkbox is the second one. */}
+                    {needsReason && (
+                      <Seam tone="red">
+                        <div>
+                          <MD t={`**${move} is terminal — this row can never move again.** Not back to Negotiation, not to Won. It stays as pipeline history, and if the client returns, the revived idea takes a **NEW Deal ID** under the same client (rule 0.4).`} />
+                          <label style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 9, fontSize: 12, cursor: "pointer" }}>
+                            <input type="checkbox" checked={ackTerminal} onChange={(e) => setAckTerminal(e.target.checked)} />
+                            <span>I understand this is permanent</span>
+                          </label>
+                        </div>
+                      </Seam>
+                    )}
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                      <Btn small icon={ArrowRight} onClick={applyMove} disabled={busy || !canMove || !deal.linked} title={deal.linked ? "" : "Link this deal in ULM first"}>
+                      <Btn
+                        small icon={mayMove ? ArrowRight : Lock} onClick={applyMove}
+                        disabled={busy || !canMove || !deal.linked || !mayMove}
+                        title={!deal.linked ? "Link this deal in ULM first" : roleTitle(roles, "deal_owner", "Only the Deal Owner may move a deal — role: deal_owner")}
+                      >
                         {busy ? "Moving…" : `Move to ${move}`}
                       </Btn>
                       <Btn small kind="ghost" onClick={() => setMove("")} disabled={busy}>Cancel</Btn>
@@ -777,17 +886,20 @@ function DealDrawer({ deal, roles, candidates, onClose, onChanged, onOpenProject
           </div>
         )}
 
-        {tab === "inputs" && <InputsPanel deal={deal} by={by} push={push} />}
+        {tab === "inputs" && <InputsPanel deal={deal} roles={roles} by={by} push={push} />}
 
         {tab === "gate" && (
           <GatePanel
-            deal={deal} roles={roles} pathB={pathB} setPathB={setPathB}
+            deal={deal} roles={roles} kind={kind} pathB={pathB}
             gate={gate} reloadGate={loadGate} gateErr={gateErr} push={push}
           />
         )}
 
         {tab === "convert" && (
-          <ConvertPanel deal={deal} gate={gate} pathB={pathB} onOpenProject={onOpenProject} push={push} lines={lines} />
+          <ConvertPanel
+            deal={deal} roles={roles} gate={gate} kind={kind} setKind={setKind} pathB={pathB}
+            onOpenProject={onOpenProject} push={push} lines={lines}
+          />
         )}
 
         {tab !== "convert" && tab !== "status" && <LogView lines={lines} />}
@@ -803,7 +915,7 @@ export default function DealsV2Module({ onOpenProject }) {
   const [dbErr, setDbErr] = useState("");
   const [reg, setReg] = useState({ headers: [], rows: [], url: "" });
   const [regErr, setRegErr] = useState("");
-  const [roles, setRoles] = useState([]);
+  const [roles, setRoles] = useState(null);   // null = not read yet / unreadable
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
@@ -819,7 +931,9 @@ export default function DealsV2Module({ onOpenProject }) {
       if (res.ok) { setReg({ headers: res.headers || [], rows: res.rows || [], url: res.registerUrl || "" }); setRegErr(""); }
       else { setReg({ headers: [], rows: [], url: "" }); setRegErr(res.error); }
     }
-    try { setRoles(await v2Roles()); } catch { setRoles([]); }
+    /* v2Roles() itself returns null when the table cannot be read; a throw means
+       the same thing. Never fall back to [] — that would assert "holds nothing". */
+    try { setRoles(await v2Roles()); } catch { setRoles(null); }
     setLoading(false); setBusy(false);
   }, [v2Deals, v2Roles]);
 
@@ -904,7 +1018,13 @@ export default function DealsV2Module({ onOpenProject }) {
 
       {!v2Configured && <Seam>{"The registrar backend is not configured, so the register half of this board is blank and nothing can be allocated. Set **VITE_ULM_PROXY_URL** (preferred) or VITE_ULM_DRIVE_URL."}</Seam>}
       {regErr && <Seam>{`The Deals tab could not be read: ${regErr} — the board below shows only what ULM has linked.`}</Seam>}
-      {dbErr && <Seam>{live ? `ULM deal links could not be read: ${dbErr} — run supabase/20-ulm-v2.sql and 21-ulm-v2-flows.sql.` : "Demo mode: there is no database, so no deal is linked, the gate cannot be confirmed and conversion is unavailable. The register-backed half still works if the registrar backend is configured."}</Seam>}
+      {/* Demo mode does not error — v2Deals() just returns nothing — so the
+          explanation has to hang off !live, not off a failure that never comes. */}
+      {!live
+        ? <Seam>{"**Demo mode.** This board needs the shared database: no deal is linked, the gate cannot be confirmed and conversion is unavailable, and every write is refused rather than silently dropped. Only the register reads still work, and only if the registrar backend is configured."}</Seam>
+        : dbErr
+          ? <Seam>{`ULM deal links could not be read: ${dbErr} — run supabase/20-ulm-v2.sql and 21-ulm-v2-flows.sql.`}</Seam>
+          : null}
 
       {/* TRIAGE — the sales inbox that has not become a deal yet */}
       <Section>
@@ -927,7 +1047,12 @@ export default function DealsV2Module({ onOpenProject }) {
                     <div style={{ fontSize: 11, color: "var(--txt3)" }}>{org?.name || r.orgName || "new organisation"}{r.valueInr ? ` · ${inr(r.valueInr)}` : ""}{r.qty ? ` · ${r.qty} units` : ""}</div>
                   </div>
                   {r.urgency === "high" && <Pill color="var(--red)">urgent</Pill>}
-                  <Btn small icon={ArrowRight} onClick={() => setTriage(r)} disabled={!v2Configured} title={v2Configured ? "" : "The registrar backend is not configured"}>Triage</Btn>
+                  {/* Triage allocates register IDs — that is the Registrar's press. */}
+                  <Btn
+                    small icon={hasRole(roles, "registrar") ? ArrowRight : Lock} onClick={() => setTriage(r)}
+                    disabled={!v2Configured || !hasRole(roles, "registrar")}
+                    title={!v2Configured ? "The registrar backend is not configured" : roleTitle(roles, "registrar", "Only the Registrar may allocate a Client or Deal ID — role: registrar")}
+                  >Triage</Btn>
                 </div>
               );
             })}
