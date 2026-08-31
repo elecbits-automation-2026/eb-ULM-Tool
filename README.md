@@ -10,6 +10,48 @@ Same Supabase as the ODM PMS, same UI/UX, its own Vercel deployment.
 > Built with React + Vite. Zero-config demo mode: with no env vars set the
 > portal boots on seeded local data so every flow works end-to-end.
 
+## SOP v2.0 — the registrar era
+
+The portal now implements **Eb-SOP_Project-Creation-and-ID-Creation v2.0** and
+**Eb-SOP_Project-Setup v2.0** against the live **Eb-Master_Register**: every
+identifier is a meaning-free serial (`EB-C-26-0001`, `EB-P-26-0012`,
+`EB-PCB-26-0003-BOM-002`), **a deal comes before every project**, and only a
+Won deal with a confirmed PO passes a six-condition sanction gate to become
+one. Projects arrive from **XOR-Sales** (which already writes the register's
+Clients and Deals tabs and stops at `Status=Open`) or from the **Sales tool**
+(`sales.requests → core.intake`, settled back with `settle_request()`).
+
+Read **[docs/ULM-V2-PLAN.md](docs/ULM-V2-PLAN.md)** for the architecture, the
+phase plan and the upstream contracts. The v1 flows described further down
+still run; they retire once the v2 board has replaced them in daily use.
+
+### Turning v2 on
+
+```sql
+-- Supabase SQL editor, in order
+\i supabase/20-ulm-v2.sql     -- roles, deal links, sanction gates, provisioning
+\i supabase/21-ulm-v2-flows.sql -- triage, deal ladder, conversion, bridge tasks
+-- then grant yourself the registrar role
+select ulm.portal_grant_role((select id from core.people where email = 'you@elecbits.in'), 'registrar');
+```
+
+```bash
+supabase functions deploy ulm-proxy ulm-sales-bridge
+supabase secrets set ULM_DRIVE_URL=https://script.google.com/macros/s/…/exec
+supabase secrets set ULM_DRIVE_TOKEN=…            # the same SHARED_TOKEN
+```
+
+In the Apps Script project: paste the latest `google-apps-script/ulm-drive.gs`,
+run **`testLocateRegister`**, and store the winning fileId as Script property
+**`V2_REGISTER_ID`** (plus the `V2_*` folder anchors listed at the top of the
+v2 section). Then *Deploy → Manage deployments → ✏️ → New version*.
+
+Finally set `VITE_ULM_PROXY_URL` in Vercel so registrar calls route through the
+role-checked edge function and the Drive token leaves the browser bundle.
+
+The **Registry** page walks the cutover: locate & pin the register, validate it
+(format law, blue example rows), and only then does allocation switch on.
+
 ---
 
 ## Quick start
