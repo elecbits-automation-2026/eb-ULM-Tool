@@ -241,6 +241,7 @@ function handle_(body) {
       case "v2.master":         return json_(v2Master_(body));
       case "v2.governance":     return json_(v2Governance_(body));
       case "v2.health":         return json_(v2Health_());
+      case "v2.backfill":       return json_(v2Backfill_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -2046,4 +2047,150 @@ function v2Health_() {
     });
   } catch (e) { /* MFG tab issues already reported above */ }
   return out;
+}
+
+
+/* ═══ v2.backfill — legacy boards, given new-scheme identities ══════════════
+   The artefact audit lists every board under the OLD naming
+   (AT32-EC20-ATA6-WQ32-DCPW-GW), some with an old project id. This walks
+   that sheet and issues a v2.0 identity for each thing it finds, writing the
+   result back into the same workbook: five new columns on the audit tab, and
+   an "EB-Master Map" tab that joins them.
+
+   Serials run INDEPENDENTLY per family — a board's PCB number says nothing
+   about its firmware number — because the Master row, not the name, is what
+   relates them. That is the whole point of a meaning-free identifier.
+
+     PCB  every board                        EB-PCB-YY-nnnn
+     BOM  every board, as-designed           EB-PCB-YY-nnnn-BOM-001
+     FW   boards with firmware evidence      EB-FW-YY-nnnn   (Law 7: no GW/SS marker)
+     ED   one per project with enclosure     EB-ED-YY-nnnn
+          evidence; per board when the board has no project
+     P    one per distinct legacy project    EB-P-YY-nnnn
+
+   A board with no legacy project keeps an empty Project ID: a project comes
+   from a won deal (Law 10) and cannot be invented by a backfill. The old
+   Board ID is never destroyed — it becomes the alias and the legacy SKU code.
+
+   { action:"v2.backfill", sheetId, tab?, dryRun?, start?:{P,PCB,FW,ED} }
+   dryRun true reports what it WOULD issue and writes nothing.              */
+
+function v2Backfill_(b) {
+  const sheetId = String(b.sheetId || "").trim();
+  if (!sheetId) return { ok: false, error: "v2.backfill needs the audit sheetId" };
+  const ss = SpreadsheetApp.openById(sheetId);
+  const sheet = b.tab ? ss.getSheetByName(String(b.tab)) : ss.getSheets()[0];
+  if (!sheet) return { ok: false, error: "No tab '" + b.tab + "' in that workbook. Tabs: " + ss.getSheets().map(function (s) { return s.getName(); }).join(", ") };
+
+  const lastRow = sheet.getLastRow(), lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return { ok: false, error: "That tab has no data rows" };
+  const head = sheet.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function (h) { return String(h).trim(); });
+  const idx = function (name) { return head.indexOf(name); };
+  const cBoard = idx("Board ID"), cProj = idx("Project ID");
+  if (cBoard < 0) return { ok: false, error: "No 'Board ID' column on that tab" };
+
+  // Evidence columns: the audit's own presence vocabulary.
+  const fwCols = [], enCols = [];
+  head.forEach(function (h, i) {
+    if (/- files$/.test(h)) return;
+    if (/^FW \d/.test(h)) fwCols.push(i);
+    if (/^EN \d/.test(h)) enCols.push(i);
+  });
+  const body = sheet.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
+  const present = function (row, cols) {
+    for (let i = 0; i < cols.length; i++) {
+      if (String(row[cols[i]] || "").toUpperCase().indexOf("PRESENT") >= 0) return true;
+    }
+    return false;
+  };
+
+  const yy = v2Yy_();
+  const start = b.start || {};
+  const from = function (fam) { return Math.max(parseInt(start[fam], 10) || 1, 1); };
+  const mk = function (fam, n) { return "EB-" + fam + "-" + yy + "-" + pad_(n, 4); };
+
+  const projMap = {}, edMap = {};
+  let nP = 0, nPcb = 0, nFw = 0, nEd = 0;
+  const out = [];      // one entry per audit row, in sheet order
+
+  // Projects first, so a shared legacy project keeps one identity across its
+  // boards — the audit's own row order decides the sequence.
+  body.forEach(function (row) {
+    const legacy = cProj >= 0 ? String(row[cProj] || "").trim() : "";
+    if (legacy && !projMap[legacy]) { nP++; projMap[legacy] = mk("P", from("P") + nP - 1); }
+  });
+
+  body.forEach(function (row) {
+    const board = String(row[cBoard] || "").trim();
+    if (!board) { out.push(null); return; }
+    const legacy = cProj >= 0 ? String(row[cProj] || "").trim() : "";
+    const project = legacy ? projMap[legacy] : "";
+    nPcb++;
+    const pcb = mk("PCB", from("PCB") + nPcb - 1);
+    let fw = "";
+    if (present(row, fwCols)) { nFw++; fw = mk("FW", from("FW") + nFw - 1); }
+    let ed = "";
+    if (present(row, enCols)) {
+      const key = project || ("board:" + pcb);
+      if (!edMap[key]) { nEd++; edMap[key] = mk("ED", from("ED") + nEd - 1); }
+      ed = edMap[key];
+    }
+    out.push({ board: board, legacy: legacy, project: project, pcb: pcb,
+               bom: pcb + "-BOM-001", fw: fw, ed: ed,
+               platform: board.split("-")[0].toUpperCase(),
+               cls: /-(GW)(-\d+)?$/i.test(board) ? "Gateway" : /-(SS)(-\d+)?$/i.test(board) ? "Sensor Node" : "Other" });
+  });
+
+  const summary = { ok: true, boards: nPcb, projects: nP, pcb: nPcb, bom: nPcb, firmware: nFw, enclosures: nEd,
+                    lastIssued: { project: nP ? mk("P", from("P") + nP - 1) : "", pcb: nPcb ? mk("PCB", from("PCB") + nPcb - 1) : "",
+                                  firmware: nFw ? mk("FW", from("FW") + nFw - 1) : "", enclosure: nEd ? mk("ED", from("ED") + nEd - 1) : "" },
+                    sheetUrl: ss.getUrl(), tab: sheet.getName() };
+  if (b.dryRun) { summary.dryRun = true; summary.sample = out.filter(String).slice(0, 5); return summary; }
+
+  // Write the five columns back, appending them if they are not there yet.
+  const NEW = ["EB Project ID", "EB PCB ID", "EB BOM ID", "EB FW ID", "EB Enclosure ID"];
+  const at = {};
+  let width = lastCol;
+  NEW.forEach(function (name) {
+    let c = head.indexOf(name);
+    if (c < 0) { width++; c = width - 1; sheet.getRange(1, width).setValue(name).setFontWeight("bold"); }
+    at[name] = c + 1;
+  });
+  const cells = out.map(function (o) {
+    return o ? [o.project, o.pcb, o.bom, o.fw, o.ed] : ["", "", "", "", ""];
+  });
+  // Contiguous when freshly appended; written column by column regardless so
+  // a re-run into existing columns behaves the same.
+  NEW.forEach(function (name, k) {
+    sheet.getRange(2, at[name], cells.length, 1).setValues(cells.map(function (r) { return [r[k]]; }));
+  });
+
+  // The join. One row per board — the only place the families meet.
+  const mapName = "EB-Master Map";
+  let map = ss.getSheetByName(mapName);
+  if (map) map.clear(); else map = ss.insertSheet(mapName);
+  const MAP_HEAD = ["Client ID", "Deal ID", "Project ID", "PCB ID", "BOM ID", "FW ID", "Enclosure ID",
+                    "MFG ID", "Legacy Board ID", "Legacy Project ID", "Platform", "Class", "Rule", "Notes"];
+  const mapRows = out.filter(String).map(function (o) {
+    return ["", "", o.project, o.pcb, o.bom, o.fw, o.ed, "", o.board, o.legacy, o.platform, o.cls, "1.0",
+            "Backfilled from the artefact audit"];
+  });
+  map.getRange(1, 1, 1, MAP_HEAD.length).setValues([MAP_HEAD]).setFontWeight("bold").setBackground("#1f3864").setFontColor("#ffffff");
+  if (mapRows.length) map.getRange(2, 1, mapRows.length, MAP_HEAD.length).setValues(mapRows);
+  map.setFrozenRows(1);
+  summary.mapTab = mapName;
+  summary.mapRows = mapRows.length;
+  return summary;
+}
+
+/* The artefact-audit workbook this backfill was written against. Run
+   testBackfillDryRun first — it issues nothing and reports what it would
+   do — then testBackfillApply once the counts look right. */
+const AUDIT_SHEET_ID = "1BYDhvxLjiGuxN0AfBL8i051_Pm_fBJq8LTlEt1ooGyo";
+
+function testBackfillDryRun() {
+  Logger.log(JSON.stringify(v2Backfill_({ sheetId: AUDIT_SHEET_ID, dryRun: true }), null, 2));
+}
+function testBackfillApply() {
+  Logger.log(JSON.stringify(v2Backfill_({ sheetId: AUDIT_SHEET_ID }), null, 2));
 }
