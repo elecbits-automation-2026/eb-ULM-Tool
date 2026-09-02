@@ -244,6 +244,7 @@ function handle_(body) {
       case "v2.backfill":       return json_(v2Backfill_(body));
       case "v2.products":       return json_(v2Products_(body));
       case "v2.products.toSheet": return json_(v2ProductsToSheet_(body));
+      case "v2.consolidate":    return json_(v2Consolidate_(body));
       case "v2.publish":        return json_(v2Publish_(body));
       case "v2.share":          return json_(v2Share_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
@@ -2222,13 +2223,13 @@ function testBackfillApply() {
    { action:"v2.products", start?:{P,PCB,FW}, dryRun? }                     */
 
 const V2_PRODUCTS = [
-  { product: "EVSO (Outdoor)",       version: "V1", legacy: "Eb-21-EL-287-01-1453", reuse: "EB-P-26-0028" },
+  { product: "EVSO (Outdoor)",       version: "V1", legacy: "Eb-21-EL-287-01-1453", reuse: "EB-P-26-0028", legacyProduct: "ES3C5-STE5-LK306-GW-101" },
   { product: "EVSO (Outdoor)",       version: "V2", legacy: "Eb-21-EL-287-01-1466", reuse: "" },
-  { product: "EVSO (Outdoor)",       version: "V3", legacy: "Eb-21-EL-287-01-1628", reuse: "EB-P-26-0008" },
-  { product: "Pro-connect (Indoor)", version: "V1", legacy: "Eb-21-EL-287-01-1452", reuse: "EB-P-26-0029" },
+  { product: "EVSO (Outdoor)",       version: "V3", legacy: "Eb-21-EL-287-01-1628", reuse: "EB-P-26-0008", legacyProduct: "Eb-21-EL-287-01-1628-GW-109" },
+  { product: "Pro-connect (Indoor)", version: "V1", legacy: "Eb-21-EL-287-01-1452", reuse: "EB-P-26-0029", legacyProduct: "ES3C5-SX13-GW-105" },
   { product: "Pro-connect (Indoor)", version: "V2", legacy: "Eb-21-EL-287-01-1481", reuse: "" },
-  { product: "Pro-connect (Indoor)", version: "V3", legacy: "Eb-21-EL-287-01-1629", reuse: "EB-P-26-0009" },
-  { product: "Repeater",             version: "V1", legacy: "Eb-21-EL-287-01-1579", reuse: "EB-P-26-0007" },
+  { product: "Pro-connect (Indoor)", version: "V3", legacy: "Eb-21-EL-287-01-1629", reuse: "EB-P-26-0009", legacyProduct: "Eb-21-EL-287-01-1629-GW-110" },
+  { product: "Repeater",             version: "V1", legacy: "Eb-21-EL-287-01-1579", reuse: "EB-P-26-0007", legacyProduct: "Eb-21-EL-287-01-1579-GW-108" },
 ];
 const V2_PRODUCT_BOARDS = {
   "EVSO (Outdoor)":       ["Mainboard", "Daughterboard", "HMI", "LED"],
@@ -2477,4 +2478,227 @@ function v2ProductsToSheet_(b) {
 /** The workbook this allocation was reviewed against. */
 function testProductsIntoAuditSheet() {
   Logger.log(JSON.stringify(v2ProductsToSheet_({ sheetId: AUDIT_SHEET_ID, by: Session.getActiveUser().getEmail() }), null, 2));
+}
+
+
+/* ═══ v2.consolidate — the whole allocation, into one workbook ══════════════
+   Everything the two backfills produce, written into the sheet you name:
+   the audit tab gains its five identity columns, and the register-shaped
+   tabs (PCB, BOM, FW, Enclosure, Projects) plus one Master join are
+   rebuilt beside it.
+
+   The allocation is deterministic — the same audit rows always yield the
+   same identifiers — so re-running restates rather than doubles. That is
+   what makes it safe to run twice while a decision is still being argued.
+
+   Order matters and is fixed: audited boards are numbered by board name so
+   the run is reproducible, products continue after them. Five audited rows
+   are the old gateway-board NAMES of the product versions; they named a
+   product, not one of its boards, so they are marked Superseded and point
+   at the four identities that replace them. Law 1 retires a row, never
+   deletes it.
+
+   { action:"v2.consolidate", sheetId, tab? }                               */
+
+function v2Consolidate_(b) {
+  const sheetId = String(b.sheetId || "").trim();
+  if (!sheetId) return { ok: false, error: "v2.consolidate needs the target sheetId" };
+  const ss = SpreadsheetApp.openById(sheetId);
+  const tabName = String(b.tab || "Audit 01-Sep 2233");
+  const aud = ss.getSheetByName(tabName) || ss.getSheets()[0];
+  if (!aud) return { ok: false, error: "No audit tab found" };
+
+  const yy = v2Yy_(), today = v2Today_(), by = String(b.by || "backfill");
+  const mk = function (f, n) { return "EB-" + f + "-" + yy + "-" + pad_(n, 4); };
+
+  // ── read the audit ──
+  const lastRow = aud.getLastRow(), lastCol = aud.getLastColumn();
+  const head = aud.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function (h) { return String(h).trim(); });
+  const cBoard = head.indexOf("Board ID"), cProj = head.indexOf("Project ID");
+  if (cBoard < 0) return { ok: false, error: "No 'Board ID' column on " + aud.getName() };
+  const fwC = [], enC = [];
+  head.forEach(function (h, i) {
+    if (/- files$/.test(h)) return;
+    if (/^FW \d/.test(h)) fwC.push(i);
+    if (/^EN \d/.test(h)) enC.push(i);
+  });
+  const body = lastRow > 1 ? aud.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues() : [];
+  const seen_ = function (row, cols) {
+    for (let i = 0; i < cols.length; i++) if (String(row[cols[i]] || "").toUpperCase().indexOf("PRESENT") >= 0) return true;
+    return false;
+  };
+  const boards = [];
+  body.forEach(function (row, i) {
+    const name = String(row[cBoard] || "").trim();
+    if (!name) return;
+    boards.push({ i: i, board: name, legacy: cProj >= 0 ? String(row[cProj] || "").trim() : "",
+                  fw: seen_(row, fwC), en: seen_(row, enC),
+                  platform: name.split("-")[0].toUpperCase(),
+                  cls: /-GW(-\d+)?$/i.test(name) ? "Gateway" : (/-SS(-\d+)?$/i.test(name) ? "Sensor Node" : "Other") });
+  });
+
+  // ── allocate: audited boards, numbered by name so the run repeats ──
+  const order = boards.slice().sort(function (x, y) { return x.board.toUpperCase() < y.board.toUpperCase() ? -1 : 1; });
+  const projOf = {}, projSeq = [];
+  order.forEach(function (b2) {
+    if (b2.legacy && !projOf[b2.legacy]) { projOf[b2.legacy] = mk("P", 1 + projSeq.length); projSeq.push(b2.legacy); }
+  });
+  let nP = projSeq.length, nPcb = 0, nFw = 0, nEd = 0;
+  const edFor = {};
+  order.forEach(function (b2) {
+    nPcb++; b2.pcb = mk("PCB", nPcb); b2.bom = b2.pcb + "-BOM-001";
+    b2.project = projOf[b2.legacy] || "";
+    b2.fwId = b2.fw ? mk("FW", ++nFw) : "";
+    b2.edId = "";
+    if (b2.en) {
+      const key = b2.project || ("board:" + b2.pcb);
+      if (!edFor[key]) edFor[key] = mk("ED", ++nEd);
+      b2.edId = edFor[key];
+    }
+  });
+
+  // ── allocate: the product versions, continuing the same runs ──
+  const prods = [];
+  V2_PRODUCTS.forEach(function (v) {
+    const project = projOf[v.legacy] || mk("P", ++nP);
+    if (!projOf[v.legacy]) projOf[v.legacy] = project;      // a version the audit never saw
+    const fw = mk("FW", ++nFw);
+    const list = V2_PRODUCT_BOARDS[v.product], only = V2_BOM_ONLY[v.product];
+    list.forEach(function (board) {
+      const pcb = mk("PCB", ++nPcb);
+      const has = !only || only.indexOf(board) >= 0;
+      prods.push({ product: v.product, version: v.version, board: board, project: project, pcb: pcb,
+                   bom: has ? pcb + "-BOM-001" : "", fw: fw, host: board === V2_FW_HOST[v.product],
+                   cls: V2_BOARD_CLASS[board] || "Other", legacy: v.legacy,
+                   legacyProduct: v.legacyProduct || "",
+                   alias: v.product + " " + v.version + " — " + board,
+                   newProject: !projSeq.length || projSeq.indexOf(v.legacy) < 0 });
+    });
+  });
+  // Which audited rows were really product-level names?
+  const superseded = {};
+  V2_PRODUCTS.forEach(function (v) {
+    if (!v.legacyProduct) return;
+    const mine = prods.filter(function (p) { return p.product === v.product && p.version === v.version; });
+    boards.forEach(function (b2) {
+      if (b2.board.toUpperCase() === v.legacyProduct.toUpperCase()) {
+        b2.superseded = "Product-level entry — replaced by the four board identities " +
+                        mine[0].pcb + ".." + mine[mine.length - 1].pcb;
+        superseded[b2.pcb] = true;
+      }
+    });
+  });
+
+  // ── write: the five identity columns on the audit tab ──
+  const NEW = ["EB Project ID", "EB PCB ID", "EB BOM ID", "EB FW ID", "EB Enclosure ID", "ID note"];
+  let width = lastCol;
+  const at = {};
+  NEW.forEach(function (n) {
+    let c = head.indexOf(n);
+    if (c < 0) { width++; c = width - 1; aud.getRange(1, width).setValue(n).setFontWeight("bold"); }
+    at[n] = c + 1;
+  });
+  const byRow = {};
+  boards.forEach(function (b2) { byRow[b2.i] = b2; });
+  const cells = body.map(function (_, i) {
+    const b2 = byRow[i];
+    return b2 ? [b2.project, b2.pcb, b2.bom, b2.fwId, b2.edId, b2.superseded || ""] : ["", "", "", "", "", ""];
+  });
+  NEW.forEach(function (n, k) {
+    aud.getRange(2, at[n], cells.length, 1).setValues(cells.map(function (r) { return [r[k]]; }));
+  });
+
+  // ── write: the register-shaped tabs and the join ──
+  const put = function (name, headRow, rows, colour) {
+    let s = ss.getSheetByName(name);
+    if (s) s.clear(); else s = ss.insertSheet(name);
+    s.getRange(1, 1, 1, headRow.length).setValues([headRow]).setFontWeight("bold")
+      .setBackground(colour || "#1f3864").setFontColor("#ffffff");
+    if (rows.length) s.getRange(2, 1, rows.length, headRow.length).setValues(rows);
+    s.setFrozenRows(1);
+    return rows.length;
+  };
+  const status = function (pcb) { return superseded[pcb] ? "Superseded" : "Active"; };
+  const out = { ok: true, sheetUrl: ss.getUrl(), tabs: {} };
+
+  out.tabs["EB Product IDs"] = put("EB Product IDs",
+    ["Product", "Version", "Board", "EB Project ID", "EB PCB ID", "EB BOM ID", "EB FW ID",
+     "FW host", "BOM note", "Class", "Legacy Project ID"],
+    prods.map(function (p) {
+      return [p.product, p.version, p.board, p.project, p.pcb, p.bom, p.fw, p.host ? "yes" : "",
+              p.bom ? "" : "covered by the HMI and Power BOMs", p.cls, p.legacy];
+    }), "#0b5394");
+
+  out.tabs.PCB = put("PCB", V2_COLUMNS.PCB,
+    boards.map(function (b2) {
+      return [b2.pcb, b2.project, b2.board, "", b2.board, b2.pcb + " V1", b2.platform, b2.cls, "V1",
+              status(b2.pcb), today, by, b2.superseded || "Legacy board carried over from the artefact audit"];
+    }).concat(prods.map(function (p) {
+      return [p.pcb, p.project, p.alias, "", "", p.pcb + " V1", "", p.cls, p.version, "Active", today, by,
+              p.board + " of " + p.product + " " + p.version];
+    })));
+
+  out.tabs.BOM = put("BOM", V2_COLUMNS.BOM,
+    boards.filter(function (b2) { return !superseded[b2.pcb]; }).map(function (b2) {
+      return [b2.bom, b2.pcb, "As designed", "", "", "", "", "Active", today, by,
+              "BOM-001 is always the as-designed revision"];
+    }).concat(prods.filter(function (p) { return p.bom; }).map(function (p) {
+      return [p.bom, p.pcb, "As designed", "", "", "", "", "Active", today, by,
+              "As-designed revision of the " + p.board];
+    })));
+
+  out.tabs.FW = put("FW", V2_COLUMNS.FW,
+    boards.filter(function (b2) { return b2.fwId; }).map(function (b2) {
+      return [b2.fwId, b2.pcb, b2.project, b2.platform, "", "fw-product-eb-fw-" + yy + "-" + b2.fwId.slice(-4), "",
+              status(b2.pcb), today, by, b2.superseded || "Firmware artefacts found in the audit"];
+    }).concat(prods.filter(function (p) { return p.host; }).map(function (p) {
+      return [p.fw, p.pcb, p.project, "", "", "fw-product-eb-fw-" + yy + "-" + p.fw.slice(-4), "", "Active", today, by,
+              "One firmware for " + p.product + " " + p.version + " — hosted on the " + p.board +
+              ", running across all " + V2_PRODUCT_BOARDS[p.product].length + " boards"];
+    })));
+
+  const edSeen = {}, edRows = [];
+  order.forEach(function (b2) {
+    if (b2.edId && !edSeen[b2.edId]) {
+      edSeen[b2.edId] = true;
+      edRows.push([b2.edId, b2.project, "Enclosure for " + b2.board, "", "", "V1", "Active", today, by,
+                   "Enclosure artefacts found in the audit"]);
+    }
+  });
+  out.tabs.Enclosure = put("Enclosure", V2_COLUMNS.Enclosure, edRows);
+
+  const pjRows = projSeq.map(function (lp) {
+    let n = 0;
+    boards.forEach(function (b2) { if (b2.project === projOf[lp]) n++; });
+    return [projOf[lp], "", "", lp, "", "Active", "", "", "", today, by,
+            "Legacy project " + lp + " — " + n + " audited board(s)"];
+  });
+  V2_PRODUCTS.forEach(function (v) {
+    if (projSeq.indexOf(v.legacy) >= 0) return;         // already listed from the audit
+    pjRows.push([projOf[v.legacy], "", "", v.product + " " + v.version, "RND+MFG", "Active", "", "", "",
+                 today, by, "Legacy project " + v.legacy]);
+  });
+  out.tabs.Projects = put("Projects", V2_COLUMNS.Projects, pjRows);
+
+  const MASTER = ["Client ID", "Deal ID", "Project ID", "PCB ID", "BOM ID", "FW ID", "Enclosure ID", "MFG ID",
+                  "Legacy Board ID", "Legacy Project ID", "Platform", "Class", "Rule", "Notes"];
+  out.tabs.Master = put("Master", MASTER,
+    boards.map(function (b2) {
+      return ["", "", b2.project, b2.pcb, superseded[b2.pcb] ? "" : b2.bom, b2.fwId, b2.edId, "",
+              b2.board, b2.legacy, b2.platform, b2.cls, "1.0", b2.superseded || "audit backfill"];
+    }).concat(prods.map(function (p) {
+      return ["", "", p.project, p.pcb, p.bom, p.fw, "", "", "", p.legacy, "", p.cls, "1.0",
+              "product backfill — " + p.product + " " + p.version + " " + p.board];
+    })));
+
+  out.counts = { auditedBoards: boards.length, productBoards: prods.length,
+                 projects: pjRows.length, pcb: out.tabs.PCB, bom: out.tabs.BOM,
+                 fw: out.tabs.FW, enclosures: out.tabs.Enclosure, master: out.tabs.Master,
+                 superseded: Object.keys(superseded).length };
+  return out;
+}
+
+/** Everything, into the audit workbook. This is the one to run. */
+function testConsolidateAll() {
+  Logger.log(JSON.stringify(v2Consolidate_({ sheetId: AUDIT_SHEET_ID, by: Session.getActiveUser().getEmail() }), null, 2));
 }
