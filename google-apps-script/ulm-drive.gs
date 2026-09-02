@@ -2378,8 +2378,6 @@ function v2Share_(b) {
 }
 
 /* Editor helpers — dry run first, then write, then share. */
-function testProductsDryRun() { Logger.log(JSON.stringify(v2Products_({ dryRun: true }).counts, null, 2)); }
-function testProductsApply()  { Logger.log(JSON.stringify(v2Products_({ by: Session.getActiveUser().getEmail() }), null, 2)); }
 function testShareRegister()  { Logger.log(JSON.stringify(v2Share_({ role: "view" }), null, 2)); }
 
 
@@ -2476,10 +2474,9 @@ function v2ProductsToSheet_(b) {
   return out;
 }
 
-/** The workbook this allocation was reviewed against. */
-function testProductsIntoAuditSheet() {
-  Logger.log(JSON.stringify(v2ProductsToSheet_({ sheetId: AUDIT_SHEET_ID, by: Session.getActiveUser().getEmail() }), null, 2));
-}
+/* testProductsIntoAuditSheet / testProductsApply retired: their project
+   reuse assumed serials starting at 0001. The consolidated path
+   (testPublishAllToRegister) reads the register's own numbers instead. */
 
 
 /* ═══ v2.consolidate — the whole allocation, into one workbook ══════════════
@@ -2502,6 +2499,27 @@ function testProductsIntoAuditSheet() {
    { action:"v2.consolidate", sheetId, tab? }                               */
 
 /**
+ * The next free serial for a family, read live from the register. Counts
+ * every id of the current year that matches the family's format — the
+ * shipped example rows included, deliberately: if they are still in the
+ * book they are occupying numbers, and stepping over them is safer than
+ * assuming someone deleted them.
+ */
+function v2NextFree_(fam) {
+  const t = V2_TABS[fam];
+  const reg = v2Sheet_(t.tab);
+  const stem = t.prefix + "-" + v2Yy_() + "-";
+  let max = 0, examples = 0;
+  v2Ids_(reg.sheet, t.tab).rows.forEach(function (r) {
+    if (!t.regex.test(r.id) || r.id.indexOf(stem) !== 0) return;
+    if (r.example) examples++;
+    const n = parseInt(r.id.slice(-4), 10);
+    if (!isNaN(n) && n > max) max = n;
+  });
+  return { next: max + 1, highest: max, examplesCounted: examples };
+}
+
+/**
  * The allocation, computed once and shared by both writers: the audit-sheet
  * filler and the register publisher must never drift apart.
  * Returns { boards, prods, projOf, projSeq, superseded, counts }.
@@ -2515,6 +2533,15 @@ function v2ComputeAll_(b) {
 
   const yy = v2Yy_();
   const mk = function (f, n) { return "EB-" + f + "-" + yy + "-" + pad_(n, 4); };
+
+  // Continue the register rather than restarting it: each family picks up
+  // from its own highest number, so nothing already issued is at risk.
+  const given = b.start || {};
+  const base = {}, from = {};
+  ["P", "PCB", "FW", "ED"].forEach(function (fam) {
+    if (given[fam]) { base[fam] = Math.max(parseInt(given[fam], 10) || 1, 1); from[fam] = { next: base[fam], given: true }; }
+    else { const f = v2NextFree_(fam); base[fam] = f.next; from[fam] = f; }
+  });
 
   const lastRow = aud.getLastRow(), lastCol = aud.getLastColumn();
   const head = aud.getRange(1, 1, 1, lastCol).getDisplayValues()[0].map(function (h) { return String(h).trim(); });
@@ -2545,18 +2572,18 @@ function v2ComputeAll_(b) {
   const order = boards.slice().sort(function (x, y) { return x.board.toUpperCase() < y.board.toUpperCase() ? -1 : 1; });
   const projOf = {}, projSeq = [];
   order.forEach(function (b2) {
-    if (b2.legacy && !projOf[b2.legacy]) { projOf[b2.legacy] = mk("P", 1 + projSeq.length); projSeq.push(b2.legacy); }
+    if (b2.legacy && !projOf[b2.legacy]) { projOf[b2.legacy] = mk("P", base.P + projSeq.length); projSeq.push(b2.legacy); }
   });
-  let nP = projSeq.length, nPcb = 0, nFw = 0, nEd = 0;
+  let kP = projSeq.length, kPcb = 0, kFw = 0, kEd = 0;
   const edFor = {};
   order.forEach(function (b2) {
-    nPcb++; b2.pcb = mk("PCB", nPcb); b2.bom = b2.pcb + "-BOM-001";
+    b2.pcb = mk("PCB", base.PCB + kPcb++); b2.bom = b2.pcb + "-BOM-001";
     b2.project = projOf[b2.legacy] || "";
-    b2.fwId = b2.fw ? mk("FW", ++nFw) : "";
+    b2.fwId = b2.fw ? mk("FW", base.FW + kFw++) : "";
     b2.edId = "";
     if (b2.en) {
       const key = b2.project || ("board:" + b2.pcb);
-      if (!edFor[key]) edFor[key] = mk("ED", ++nEd);
+      if (!edFor[key]) edFor[key] = mk("ED", base.ED + kEd++);
       b2.edId = edFor[key];
     }
   });
@@ -2564,12 +2591,12 @@ function v2ComputeAll_(b) {
   // The product versions continue the same runs.
   const prods = [];
   V2_PRODUCTS.forEach(function (v) {
-    const project = projOf[v.legacy] || mk("P", ++nP);
+    const project = projOf[v.legacy] || mk("P", base.P + kP++);
     if (!projOf[v.legacy]) projOf[v.legacy] = project;
-    const fw = mk("FW", ++nFw);
+    const fw = mk("FW", base.FW + kFw++);
     const list = V2_PRODUCT_BOARDS[v.product], only = V2_BOM_ONLY[v.product];
     list.forEach(function (board) {
-      const pcb = mk("PCB", ++nPcb);
+      const pcb = mk("PCB", base.PCB + kPcb++);
       const has = !only || only.indexOf(board) >= 0;
       prods.push({ product: v.product, version: v.version, board: board, project: project, pcb: pcb,
                    bom: has ? pcb + "-BOM-001" : "", fw: fw, host: board === V2_FW_HOST[v.product],
@@ -2596,8 +2623,11 @@ function v2ComputeAll_(b) {
   return { ok: true, ss: ss, aud: aud, head: head, body: body, boards: boards, order: order,
            prods: prods, projOf: projOf, projSeq: projSeq, superseded: superseded,
            counts: { auditedBoards: boards.length, productBoards: prods.length,
-                     projects: Object.keys(projOf).length, pcb: nPcb, fw: nFw, enclosures: nEd,
-                     superseded: Object.keys(superseded).length } };
+                     projects: Object.keys(projOf).length, pcb: kPcb, fw: kFw, enclosures: kEd,
+                     superseded: Object.keys(superseded).length },
+           startedFrom: { Project: mk("P", base.P), PCB: mk("PCB", base.PCB),
+                          Firmware: mk("FW", base.FW), Enclosure: mk("ED", base.ED) },
+           registerHeld: from };
 }
 
 /**
@@ -2698,9 +2728,11 @@ function v2PublishAll_(b) {
   const plan = v2RegisterPlan_(c, b.by);
   const counts = {};
   for (const k in plan) counts[k] = plan[k].length;
-  if (b.dryRun) return { ok: true, dryRun: true, counts: counts, source: c.counts };
+  if (b.dryRun) return { ok: true, dryRun: true, counts: counts, source: c.counts,
+                         startedFrom: c.startedFrom, registerHeld: c.registerHeld };
   const res = v2Publish_({ plan: plan, by: b.by });
-  if (res.ok) res.source = c.counts;
+  res.source = c.counts;
+  res.startedFrom = c.startedFrom;
   return res;
 }
 
