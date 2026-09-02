@@ -35,9 +35,15 @@ BOARDS = {
     "Repeater":             ["Mainboard", "Daughterboard", "HMI", "LED"],
     "Pro-connect (Indoor)": ["HMI", "Power", "Left", "Right"],
 }
-# Boards that carry a controller get a firmware identity without question.
-# LED and Power are usually passive — flagged, not assumed.
-FW_CERTAIN = {"Mainboard", "Daughterboard", "HMI", "Left", "Right"}
+# ONE firmware identity per product version, not per board: the unit runs a
+# single build across its boards. The FW row names its host board, and the
+# Master rows tie that firmware to every board of the version.
+FW_HOST = {"EVSO (Outdoor)": "Mainboard", "Repeater": "Mainboard", "Pro-connect (Indoor)": "HMI"}
+# Boards that carry their own bill of material. Pro-connect's Left and Right
+# boards are covered by the HMI and Power BOMs, so they get no BOM of their own.
+BOM_BOARDS = {"EVSO (Outdoor)": {"Mainboard", "Daughterboard", "HMI", "LED"},
+              "Repeater":       {"Mainboard", "Daughterboard", "HMI", "LED"},
+              "Pro-connect (Indoor)": {"HMI", "Power"}}
 CLASS = {"Mainboard": "Gateway", "Daughterboard": "Controller", "HMI": "Controller",
          "LED": "Power", "Power": "Power", "Left": "Sensor Node", "Right": "Sensor Node"}
 
@@ -58,16 +64,18 @@ for v in versions:
         v["project"], v["project_src"] = REUSE_P[lp], "reused from the audit backfill"
     else:
         v["project"], v["project_src"] = mk("P", START["P"] + nP), "newly issued"; nP += 1
+    # One firmware for the whole version, issued once and shared by its boards.
+    v["fw"] = mk("FW", START["FW"] + nFw); nFw += 1
     for board in BOARDS[v["product"]]:
         pcb = mk("PCB", START["PCB"] + nPcb); nPcb += 1
-        certain = board in FW_CERTAIN
-        fw = mk("FW", START["FW"] + nFw); nFw += 1
+        has_bom = board in BOM_BOARDS[v["product"]]
         rows.append({
             "product": v["product"], "version": v["version"], "board": board,
             "project": v["project"], "project_src": v["project_src"],
             "legacy_project": lp, "legacy_product": v["legacy_product"],
-            "pcb": pcb, "bom": pcb + "-BOM-001", "fw": fw,
-            "fw_note": "" if certain else "confirm — passive board? delete this FW row if it carries no controller",
+            "pcb": pcb, "bom": (pcb + "-BOM-001") if has_bom else "",
+            "fw": v["fw"], "fw_host": board == FW_HOST[v["product"]],
+            "bom_note": "" if has_bom else "covered by the HMI and Power BOMs",
             "cls": CLASS[board],
             "alias": f"{v['product']} {v['version']} — {board}",
         })
@@ -83,9 +91,10 @@ def sheet(name, headers, data):
     s.freeze_panes = "A2"
 
 sheet("Map", ["Product", "Version", "Board", "EB Project ID", "EB PCB ID", "EB BOM ID", "EB FW ID",
-              "Firmware note", "Class", "Legacy Project ID", "Legacy Product ID", "Project ID source"],
+              "FW host board", "BOM note", "Class", "Legacy Project ID", "Legacy Product ID", "Project ID source"],
       [[r["product"], r["version"], r["board"], r["project"], r["pcb"], r["bom"], r["fw"],
-        r["fw_note"], r["cls"], r["legacy_project"], r["legacy_product"], r["project_src"]] for r in rows])
+        "yes" if r["fw_host"] else "", r["bom_note"], r["cls"], r["legacy_project"], r["legacy_product"],
+        r["project_src"]] for r in rows])
 
 sheet("PCB", ["PCB ID", "Project ID", "Name / Alias", "Drive Folder Link", "Legacy SKU Code",
               "Silkscreen Marking", "Platform", "Class", "Version", "Status", "Date Added", "Added By", "Notes"],
@@ -95,12 +104,16 @@ sheet("PCB", ["PCB ID", "Project ID", "Name / Alias", "Drive Folder Link", "Lega
 sheet("BOM", ["BOM ID", "PCB ID", "Revision Reason", "Line Count", "Costed?", "Cost per Unit",
               "Costed On", "Status", "Date Added", "Added By", "Notes"],
       [[r["bom"], r["pcb"], "As designed", "", "", "", "", "Active", "", "backfill",
-        "BOM-001 is always the as-designed revision"] for r in rows])
+        f"BOM-001 is always the as-designed revision — {r['board']} of {r['product']} {r['version']}"]
+       for r in rows if r["bom"]])
 
 sheet("FW", ["FW ID", "PCB ID", "Project ID", "Platform", "Latest Version (Git tag)", "Repo",
              "Drive Folder Link", "Status", "Date Added", "Added By", "Notes"],
       [[r["fw"], r["pcb"], r["project"], "", "", f"fw-product-eb-fw-{YY}-{r['fw'][-4:]}", "",
-        "Active", "", "backfill", (r["fw_note"] or f"Firmware for the {r['board']} of {r['product']} {r['version']}")] for r in rows])
+        "Active", "", "backfill",
+        f"One firmware for {r['product']} {r['version']} — hosted on the {r['board']}, running across all "
+        + str(len(BOARDS[r['product']])) + " boards of the version"]
+       for r in rows if r["fw_host"]])
 
 newp = [v for v in versions if v["project_src"] == "newly issued"]
 sheet("Projects (new only)", ["Project ID", "Source Deal ID", "Client ID", "Project Name", "Kind", "Status",
@@ -111,10 +124,12 @@ sheet("Projects (new only)", ["Project ID", "Source Deal ID", "Client ID", "Proj
 sheet("Master", ["Client ID", "Deal ID", "Project ID", "PCB ID", "BOM ID", "FW ID", "Enclosure ID",
                  "MFG ID", "Client Name (auto)", "Project Name (auto)", "Rule", "Notes"],
       [["", "", r["project"], r["pcb"], r["bom"], r["fw"], "", "", "",
-        f"{r['product']} {r['version']}", "1.0", f"{r['board']} — legacy {r['legacy_project']}"] for r in rows])
+        f"{r['product']} {r['version']}", "1.0",
+        f"{r['board']} — one firmware across the version" + (" · no BOM of its own" if not r["bom"] else "")]
+       for r in rows])
 
 wb.save("EbID_EVSO_Proconnect_Repeater.xlsx")
-print(f"versions={len(versions)}  boards={len(rows)}  new projects={nP}  pcb={nPcb}  bom={nPcb}  fw={nFw}")
+nBom = sum(1 for r in rows if r["bom"])
+print(f"versions={len(versions)}  boards={len(rows)}  new projects={nP}  pcb={nPcb}  bom={nBom}  fw={nFw}")
 print(f"ranges: PCB {rows[0]['pcb']}..{rows[-1]['pcb']}   FW {rows[0]['fw']}..{rows[-1]['fw']}")
-print("flagged for firmware confirmation:", sum(1 for r in rows if r["fw_note"]))
-for r in rows[:6]: print("  ", r["product"], r["version"], r["board"], r["project"], r["pcb"], r["fw"])
+print("boards without their own BOM:", sum(1 for r in rows if not r["bom"]))
