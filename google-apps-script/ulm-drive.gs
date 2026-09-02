@@ -2777,3 +2777,26 @@ function testPublishAllDryRun() {
 function testPublishAllToRegister() {
   Logger.log(JSON.stringify(v2PublishAll_({ sheetId: AUDIT_SHEET_ID, by: Session.getActiveUser().getEmail() }), null, 2));
 }
+
+/** What the pinned register actually contains — run this if a write
+    complains it cannot find a tab, or to confirm the audit source. */
+function testShowTabs() {
+  const id = v2RegisterId_();
+  const out = { pinnedValue: id };
+  if (!id) { out.problem = "V2_REGISTER_ID is not set"; Logger.log(JSON.stringify(out, null, 2)); return; }
+  if (!/^[-\w]{25,}$/.test(id)) {
+    out.problem = "That looks like a NAME, not a fileId. Put the long id from the sheet's URL " +
+                  "(docs.google.com/spreadsheets/d/<THIS PART>/edit) into V2_REGISTER_ID.";
+    Logger.log(JSON.stringify(out, null, 2)); return;
+  }
+  try {
+    const ss = SpreadsheetApp.openById(id);
+    out.name = ss.getName();
+    out.tabs = ss.getSheets().map(function (s) { return s.getName() + " (" + s.getLastRow() + " rows)"; });
+    out.auditTabPresent = ss.getSheetByName("Audit 01-Sep 2233") !== null;
+    out.registerTabs = ["Projects", "PCB", "BOM", "FW", "Enclosure", "Master"].filter(function (t) {
+      return ss.getSheetByName(t) !== null;
+    });
+  } catch (e) { out.problem = String(e && e.message || e); }
+  Logger.log(JSON.stringify(out, null, 2));
+}
