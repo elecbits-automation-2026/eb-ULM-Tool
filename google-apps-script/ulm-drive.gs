@@ -242,6 +242,9 @@ function handle_(body) {
       case "v2.governance":     return json_(v2Governance_(body));
       case "v2.health":         return json_(v2Health_());
       case "v2.backfill":       return json_(v2Backfill_(body));
+      case "v2.products":       return json_(v2Products_(body));
+      case "v2.publish":        return json_(v2Publish_(body));
+      case "v2.share":          return json_(v2Share_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
     }
   } catch (err) {
@@ -2194,3 +2197,184 @@ function testBackfillDryRun() {
 function testBackfillApply() {
   Logger.log(JSON.stringify(v2Backfill_({ sheetId: AUDIT_SHEET_ID }), null, 2));
 }
+
+
+/* ═══ v2.products — EVSO · Pro-connect · Repeater, into the register ════════
+   The version tracker lists seven product versions, each carrying four
+   boards. This issues their identities and writes them into the pinned
+   master register — Projects, PCB, BOM, FW and the Master join.
+
+   What it encodes, from the product owner:
+     PCB  four per version, always
+     BOM  four for EVSO and Repeater; two for Pro-connect, whose Left and
+          Right boards are covered by the HMI and Power bills
+     FW   ONE per version — a version runs a single build across its boards.
+          The FW row names its host board; the Master rows carry that
+          firmware against every board of the version, which is what the
+          Master tab is for.
+
+   Five of the seven legacy projects already hold an EB-P number, so those
+   are reused: Law 1 renumbers nothing. Serials for everything else continue
+   from `start`, and the run REFUSES if any identifier it would issue is
+   already in the register — a double-issued serial cannot be taken back.
+
+   { action:"v2.products", start?:{P,PCB,FW}, dryRun? }                     */
+
+const V2_PRODUCTS = [
+  { product: "EVSO (Outdoor)",       version: "V1", legacy: "Eb-21-EL-287-01-1453", reuse: "EB-P-26-0028" },
+  { product: "EVSO (Outdoor)",       version: "V2", legacy: "Eb-21-EL-287-01-1466", reuse: "" },
+  { product: "EVSO (Outdoor)",       version: "V3", legacy: "Eb-21-EL-287-01-1628", reuse: "EB-P-26-0008" },
+  { product: "Pro-connect (Indoor)", version: "V1", legacy: "Eb-21-EL-287-01-1452", reuse: "EB-P-26-0029" },
+  { product: "Pro-connect (Indoor)", version: "V2", legacy: "Eb-21-EL-287-01-1481", reuse: "" },
+  { product: "Pro-connect (Indoor)", version: "V3", legacy: "Eb-21-EL-287-01-1629", reuse: "EB-P-26-0009" },
+  { product: "Repeater",             version: "V1", legacy: "Eb-21-EL-287-01-1579", reuse: "EB-P-26-0007" },
+];
+const V2_PRODUCT_BOARDS = {
+  "EVSO (Outdoor)":       ["Mainboard", "Daughterboard", "HMI", "LED"],
+  "Repeater":             ["Mainboard", "Daughterboard", "HMI", "LED"],
+  "Pro-connect (Indoor)": ["HMI", "Power", "Left", "Right"],
+};
+const V2_FW_HOST  = { "EVSO (Outdoor)": "Mainboard", "Repeater": "Mainboard", "Pro-connect (Indoor)": "HMI" };
+const V2_BOM_ONLY = { "EVSO (Outdoor)": null, "Repeater": null, "Pro-connect (Indoor)": ["HMI", "Power"] };
+const V2_BOARD_CLASS = { Mainboard: "Gateway", Daughterboard: "Controller", HMI: "Controller",
+                         LED: "Power", Power: "Power", Left: "Sensor Node", Right: "Sensor Node" };
+
+function v2Products_(b) {
+  const yy = v2Yy_();
+  const start = b.start || {};
+  const from = function (fam, dflt) { return Math.max(parseInt(start[fam], 10) || dflt, 1); };
+  const mk = function (fam, n) { return "EB-" + fam + "-" + yy + "-" + pad_(n, 4); };
+  let nP = 0, nPcb = 0, nFw = 0;
+
+  const plan = { Projects: [], PCB: [], BOM: [], FW: [], Master: [] };
+  V2_PRODUCTS.forEach(function (v) {
+    const project = v.reuse || mk("P", from("P", 39) + nP++);
+    if (!v.reuse) {
+      plan.Projects.push({ "Project ID": project, "Project Name": v.product + " " + v.version,
+        "Kind": "RND+MFG", "Status": "Active", "Date Added": v2Today_(), "Added By": String(b.by || "backfill"),
+        "Notes": "Legacy project " + v.legacy });
+    }
+    const fw = mk("FW", from("FW", 60) + nFw++);
+    const boards = V2_PRODUCT_BOARDS[v.product];
+    const bomOnly = V2_BOM_ONLY[v.product];
+    boards.forEach(function (board) {
+      const pcb = mk("PCB", from("PCB", 154) + nPcb++);
+      const hasBom = !bomOnly || bomOnly.indexOf(board) >= 0;
+      const label = v.product + " " + v.version + " — " + board;
+      plan.PCB.push({ "PCB ID": pcb, "Project ID": project, "Name / Alias": label,
+        "Silkscreen Marking": pcb + " V1", "Class": V2_BOARD_CLASS[board] || "Other",
+        "Version": v.version, "Status": "Active", "Date Added": v2Today_(),
+        "Added By": String(b.by || "backfill"), "Notes": board + " of " + v.product + " " + v.version });
+      if (hasBom) {
+        plan.BOM.push({ "BOM ID": pcb + "-BOM-001", "PCB ID": pcb, "Revision Reason": "As designed",
+          "Status": "Active", "Date Added": v2Today_(), "Added By": String(b.by || "backfill"),
+          "Notes": "As-designed revision of the " + board });
+      }
+      if (board === V2_FW_HOST[v.product]) {
+        plan.FW.push({ "FW ID": fw, "PCB ID": pcb, "Project ID": project,
+          "Repo": "fw-product-eb-fw-" + yy + "-" + fw.slice(-4), "Status": "Active",
+          "Date Added": v2Today_(), "Added By": String(b.by || "backfill"),
+          "Notes": "One firmware for " + v.product + " " + v.version + " — hosted on the " + board +
+                   ", running across all " + boards.length + " boards of the version" });
+      }
+      plan.Master.push({ "Project ID": project, "PCB ID": pcb, "BOM ID": hasBom ? pcb + "-BOM-001" : "",
+        "FW ID": fw, "Project Name (auto)": v.product + " " + v.version, "Rule": "1.0",
+        "Notes": board + (hasBom ? "" : " · no BOM of its own") });
+    });
+  });
+
+  const counts = { projects: plan.Projects.length, pcb: plan.PCB.length, bom: plan.BOM.length,
+                   fw: plan.FW.length, master: plan.Master.length };
+  if (b.dryRun) return { ok: true, dryRun: true, counts: counts, plan: plan };
+  return v2Publish_({ plan: plan, by: b.by });
+}
+
+/**
+ * Append prepared rows into the pinned master register, tab by tab.
+ * Refuses outright if ANY incoming identifier is already there: an issued
+ * serial is spent forever (Law 1), so a partial re-run must not double-issue.
+ * Nothing is written until every tab has been checked.
+ */
+function v2Publish_(b) {
+  const plan = b.plan || {};
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const prepared = [], clashes = [];
+    for (const tabName in plan) {
+      const rows = plan[tabName] || [];
+      if (!rows.length) continue;
+      if (!V2_COLUMNS[tabName]) return { ok: false, error: "Unknown register tab: " + tabName };
+      const reg = v2Sheet_(tabName);
+      const head = v2HeaderRow_(reg.sheet, tabName);
+      const idCol = V2_COLUMNS[tabName][0];
+      const existing = {};
+      if (tabName !== "Master") {
+        v2Ids_(reg.sheet, tabName).rows.forEach(function (r) { existing[r.id.toUpperCase()] = r.row; });
+        rows.forEach(function (r) {
+          const id = String(r[idCol] || "").trim().toUpperCase();
+          if (id && existing[id]) clashes.push(tabName + ": " + id + " already at row " + existing[id]);
+        });
+      }
+      prepared.push({ tabName: tabName, reg: reg, head: head, rows: rows });
+    }
+    if (clashes.length) {
+      return { ok: false, error: "Refusing to write — these identifiers are already in the register. " +
+               "Re-run with a higher `start` so nothing is issued twice (Law 1).", clashes: clashes };
+    }
+
+    const written = {};
+    prepared.forEach(function (p) {
+      const cols = V2_COLUMNS[p.tabName];
+      const values = p.rows.map(function (r) {
+        return cols.map(function (c) { return r[c] != null ? r[c] : ""; });
+      });
+      p.reg.sheet.getRange(p.reg.sheet.getLastRow() + 1, 1, values.length, cols.length).setValues(values);
+      written[p.tabName] = values.length;
+    });
+    return { ok: true, written: written, registerUrl: prepared.length ? prepared[0].reg.ss.getUrl() : "" };
+  } finally { lock.releaseLock(); }
+}
+
+/* ── v2.share — who may read the register ──────────────────────────────────
+   Default is the Elecbits domain with VIEW access: a register carries
+   commercial data, so "everyone" means everyone inside the company, not
+   anyone with the link. Public sharing needs anyone:true, said out loud.
+   { action:"v2.share", fileId?, emails?:[], role?:"view"|"edit",
+     domain?:"elecbits.in", anyone?:false }                                 */
+function v2Share_(b) {
+  const fileId = String(b.fileId || v2RegisterId_() || "").trim();
+  if (!fileId) return { ok: false, error: "Nothing to share — pin the register or pass a fileId" };
+  const file = DriveApp.getFileById(fileId);
+  const edit = String(b.role || "view").toLowerCase() === "edit";
+  const out = { ok: true, file: file.getName(), url: file.getUrl(), role: edit ? "edit" : "view", shared: [] };
+
+  (b.emails || []).forEach(function (e) {
+    const email = String(e).trim();
+    if (!email) return;
+    try {
+      if (edit) file.addEditor(email); else file.addViewer(email);
+      out.shared.push(email);
+    } catch (err) { (out.failed = out.failed || []).push(email + ": " + String(err && err.message || err)); }
+  });
+
+  if (b.anyone) {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, edit ? DriveApp.Permission.EDIT : DriveApp.Permission.VIEW);
+    out.audience = "anyone with the link";
+  } else if (b.domain !== null) {
+    const domain = String(b.domain || "elecbits.in").trim();
+    try {
+      file.setSharing(DriveApp.Access.DOMAIN_WITH_LINK, edit ? DriveApp.Permission.EDIT : DriveApp.Permission.VIEW);
+      out.audience = "anyone at " + domain + " with the link";
+    } catch (err) {
+      out.audience = "domain sharing refused: " + String(err && err.message || err) +
+                     " — name the people in `emails` instead";
+    }
+  }
+  return out;
+}
+
+/* Editor helpers — dry run first, then write, then share. */
+function testProductsDryRun() { Logger.log(JSON.stringify(v2Products_({ dryRun: true }).counts, null, 2)); }
+function testProductsApply()  { Logger.log(JSON.stringify(v2Products_({ by: Session.getActiveUser().getEmail() }), null, 2)); }
+function testShareRegister()  { Logger.log(JSON.stringify(v2Share_({ role: "view" }), null, 2)); }
