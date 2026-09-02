@@ -243,6 +243,7 @@ function handle_(body) {
       case "v2.health":         return json_(v2Health_());
       case "v2.backfill":       return json_(v2Backfill_(body));
       case "v2.products":       return json_(v2Products_(body));
+      case "v2.products.toSheet": return json_(v2ProductsToSheet_(body));
       case "v2.publish":        return json_(v2Publish_(body));
       case "v2.share":          return json_(v2Share_(body));
       default: return json_({ ok: false, error: "Unknown action: " + body.action });
@@ -2378,3 +2379,102 @@ function v2Share_(b) {
 function testProductsDryRun() { Logger.log(JSON.stringify(v2Products_({ dryRun: true }).counts, null, 2)); }
 function testProductsApply()  { Logger.log(JSON.stringify(v2Products_({ by: Session.getActiveUser().getEmail() }), null, 2)); }
 function testShareRegister()  { Logger.log(JSON.stringify(v2Share_({ role: "view" }), null, 2)); }
+
+
+/* ── v2.products.toSheet — the same allocation, written into a workbook ─────
+   The register is where identifiers eventually live, but a review workbook
+   is where they get read first. This writes the EVSO / Pro-connect /
+   Repeater allocation into any sheet you name: a human map, four
+   register-shaped tabs ready to paste, and the rows appended to the
+   EB-Master Map so one join covers every backfill in the book.
+
+   Re-running replaces the tabs it owns rather than appending twice — the
+   allocation is deterministic, so a second run writes the same identifiers.
+
+   { action:"v2.products.toSheet", sheetId, start?:{P,PCB,FW} }             */
+
+function v2ProductsToSheet_(b) {
+  const sheetId = String(b.sheetId || "").trim();
+  if (!sheetId) return { ok: false, error: "v2.products.toSheet needs the target sheetId" };
+  const ss = SpreadsheetApp.openById(sheetId);
+  const built = v2Products_({ start: b.start, dryRun: true, by: b.by });
+  if (!built.ok) return built;
+  const plan = built.plan;
+
+  // The map: one row per board, in reading order.
+  const MAP_HEAD = ["Product", "Version", "Board", "EB Project ID", "EB PCB ID", "EB BOM ID", "EB FW ID",
+                    "FW host board", "BOM note", "Class", "Legacy Project ID", "Project ID source"];
+  const byPcb = {};
+  plan.PCB.forEach(function (r) { byPcb[r["PCB ID"]] = r; });
+  const fwHostPcb = {};
+  plan.FW.forEach(function (r) { fwHostPcb[r["PCB ID"]] = r["FW ID"]; });
+  const newProjects = {};
+  plan.Projects.forEach(function (r) { newProjects[r["Project ID"]] = true; });
+
+  const mapRows = plan.Master.map(function (m) {
+    const pcb = byPcb[m["PCB ID"]] || {};
+    const name = String(pcb["Name / Alias"] || "");          // "Product Vn — Board"
+    const parts = name.split(" — ");
+    const head = (parts[0] || "").trim();
+    const board = (parts[1] || "").trim();
+    const cut = head.lastIndexOf(" ");
+    return [head.slice(0, cut), head.slice(cut + 1), board, m["Project ID"], m["PCB ID"],
+            m["BOM ID"] || "", m["FW ID"], fwHostPcb[m["PCB ID"]] ? "yes" : "",
+            m["BOM ID"] ? "" : "covered by the HMI and Power BOMs",
+            pcb["Class"] || "", "", newProjects[m["Project ID"]] ? "newly issued" : "reused from the audit backfill"];
+  });
+
+  const write = function (name, head, rows, colour) {
+    let s = ss.getSheetByName(name);
+    if (s) s.clear(); else s = ss.insertSheet(name);
+    s.getRange(1, 1, 1, head.length).setValues([head]).setFontWeight("bold")
+      .setBackground(colour || "#1f3864").setFontColor("#ffffff");
+    if (rows.length) s.getRange(2, 1, rows.length, head.length).setValues(rows);
+    s.setFrozenRows(1);
+    return rows.length;
+  };
+  const shaped = function (tabName, rows) {
+    const cols = V2_COLUMNS[tabName];
+    return rows.map(function (r) { return cols.map(function (c) { return r[c] != null ? r[c] : ""; }); });
+  };
+
+  const out = { ok: true, sheetUrl: ss.getUrl(), tabs: {} };
+  out.tabs["EB Product IDs"]      = write("EB Product IDs", MAP_HEAD, mapRows, "#0b5394");
+  out.tabs["EB Product PCB"]      = write("EB Product PCB", V2_COLUMNS.PCB, shaped("PCB", plan.PCB));
+  out.tabs["EB Product BOM"]      = write("EB Product BOM", V2_COLUMNS.BOM, shaped("BOM", plan.BOM));
+  out.tabs["EB Product FW"]       = write("EB Product FW", V2_COLUMNS.FW, shaped("FW", plan.FW));
+  out.tabs["EB Product Projects"] = write("EB Product Projects", V2_COLUMNS.Projects, shaped("Projects", plan.Projects));
+
+  // Extend the master join rather than starting a second one.
+  const MAP_TAB = "EB-Master Map";
+  const MASTER_HEAD = ["Client ID", "Deal ID", "Project ID", "PCB ID", "BOM ID", "FW ID", "Enclosure ID",
+                       "MFG ID", "Legacy Board ID", "Legacy Project ID", "Platform", "Class", "Rule", "Notes"];
+  let map = ss.getSheetByName(MAP_TAB);
+  if (!map) {
+    map = ss.insertSheet(MAP_TAB);
+    map.getRange(1, 1, 1, MASTER_HEAD.length).setValues([MASTER_HEAD]).setFontWeight("bold")
+      .setBackground("#1f3864").setFontColor("#ffffff");
+    map.setFrozenRows(1);
+  }
+  // Drop any rows a previous run of THIS allocation left, so re-running is safe.
+  const last = map.getLastRow();
+  if (last > 1) {
+    const have = map.getRange(2, 1, last - 1, MASTER_HEAD.length).getDisplayValues();
+    const keep = have.filter(function (r) { return String(r[13] || "").indexOf("product backfill") < 0; });
+    map.getRange(2, 1, last - 1, MASTER_HEAD.length).clearContent();
+    if (keep.length) map.getRange(2, 1, keep.length, MASTER_HEAD.length).setValues(keep);
+  }
+  const masterRows = mapRows.map(function (r) {
+    return ["", "", r[3], r[4], r[5], r[6], "", "", "", r[10], "", r[9], "1.0",
+            "product backfill — " + r[0] + " " + r[1] + " " + r[2]];
+  });
+  map.getRange(map.getLastRow() + 1, 1, masterRows.length, MASTER_HEAD.length).setValues(masterRows);
+  out.tabs[MAP_TAB] = "+" + masterRows.length + " rows";
+  out.counts = built.counts;
+  return out;
+}
+
+/** The workbook this allocation was reviewed against. */
+function testProductsIntoAuditSheet() {
+  Logger.log(JSON.stringify(v2ProductsToSheet_({ sheetId: AUDIT_SHEET_ID, by: Session.getActiveUser().getEmail() }), null, 2));
+}
